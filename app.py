@@ -6,7 +6,7 @@ import time
 import subprocess
 from datetime import datetime
 from werkzeug.utils import secure_filename
-from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN
+from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN, RAG
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException
 import warnings
@@ -119,7 +119,7 @@ def ensure_elasticsearch_ready(max_wait_seconds=15):
     raise RuntimeError("Elasticsearch no respondió en el puerto 9200 dentro de 15 segundos.")
 
 # Inicializar conexiones
-ensure_elasticsearch_ready(max_wait_seconds=15)
+ensure_elasticsearch_ready(max_wait_seconds=int(os.getenv('ELASTIC_STARTUP_TIMEOUT', 120)))
 mongo = MongoDB(MONGO_URI, MONGO_DB)
 mongo.verificar_colecciones(MONGO_COLECCION)
 elastic = ElasticSearch(ELASTIC_URL, ELASTIC_USER, ELASTIC_PASSWORD)
@@ -670,6 +670,7 @@ def cargar_documentos_elastic():
             total_archivos = len(archivos_filtrados)
             print(f"\nTotal de archivos a procesar con PLN: {total_archivos}")
 
+            archivos_fallidos = []
             for i, archivo in enumerate(archivos_filtrados, start=1):
                 # ----- Extracción de texto -----
                 ruta = archivo.get('ruta')
@@ -682,15 +683,20 @@ def cargar_documentos_elastic():
                 if extension == 'pdf':
                     # Intentar extracción normal
                     texto = Funciones.extraer_texto_pdf(ruta)
-                    print(f" → Texto extraído (longitud {len(texto)} caracteres): OK") 
-                    
-                    # Si no se extrajo texto, intentar con OCR
-                    if not texto or len(texto.strip()) < 100:
+                    if texto and len(texto.strip()) >= 50:
+                        print(f" → Texto extraído (longitud {len(texto)} caracteres): ✓")
+                    else:
+                        print(f" → Texto extraído (longitud {len(texto)} caracteres): ✗ (insuficiente, intentando OCR...)")
+                        
+                        # Si no se extrajo texto suficiente, intentar con OCR
                         try:
                             texto = Funciones.extraer_texto_pdf_ocr(ruta)
-                            print(f" → Texto extraído con OCR (longitud {len(texto)} caracteres): OK")
-                        except:
-                            pass
+                            if texto and len(texto.strip()) >= 50:
+                                print(f" → Texto extraído con OCR (longitud {len(texto)} caracteres): ✓")
+                            else:
+                                print(f" → Texto extraído con OCR (longitud {len(texto)} caracteres): ✗ (insuficiente)")
+                        except Exception as e:
+                            print(f" → Texto extraído con OCR: ✗ (error: {str(e)[:80]})")
                 
                 elif extension == 'txt':
                     try:
@@ -704,6 +710,10 @@ def cargar_documentos_elastic():
                             pass
                 
                 if not texto or len(texto.strip()) < 50:        # si no se extrajo texto suficiente, omitir
+                    archivos_fallidos.append({
+                        'ruta': ruta,
+                        'razon': 'No se extrajo texto suficiente (< 50 caracteres)'
+                    })
                     continue
                 
                 # ------ Procesar con PLN -------
@@ -758,8 +768,18 @@ def cargar_documentos_elastic():
         # Si no hay documentos a insertar en elastic, terminar sin error
         if not documentos:
             #return jsonify({'success': False, 'error': 'No se pudieron procesar documentos'}), 400
-            print("No hay documentos nuevos para procesar (todos duplicados).")
-            return jsonify({"success": True, "indexados": 0, "duplicados": 0}), 200
+            print(f"No hay documentos nuevos para procesar (todos duplicados o sin texto).")
+            print(f"Archivos fallidos por extracción: {len(archivos_fallidos)}")
+            for fallo in archivos_fallidos[:5]:  # mostrar primeros 5
+                print(f"  - {fallo['ruta']}: {fallo['razon']}")
+            if len(archivos_fallidos) > 5:
+                print(f"  ... y {len(archivos_fallidos) - 5} más")
+            return jsonify({
+                "success": True, 
+                "indexados": 0, 
+                "duplicados": 0,
+                "fallidos_extraccion": len(archivos_fallidos)
+            }), 200
         
         # Indexar documentos en Elastic
         print(f"\nTotal de documentos a indexar: {len(documentos)}")
@@ -769,7 +789,8 @@ def cargar_documentos_elastic():
         return jsonify({
             'success': resultado['success'],
             'indexados': resultado['indexados'],
-            'errores': resultado['fallidos']
+            'errores': resultado['fallidos'],
+            'fallidos_extraccion': len(archivos_fallidos)
         })
         
     except Exception as e:
@@ -829,6 +850,13 @@ def procesar_webscraping_elastic():
 
 #--------------rutas de elasitcsearch - fin-------------
 
+@app.route('/logout')
+def logout():
+    session.clear()
+    flash('Sesión cerrada correctamente', 'info')
+    return redirect(url_for('landing'))
+
+
 @app.route('/admin')
 def admin():
     """Página de administración (protegida requiere login)"""
@@ -836,8 +864,62 @@ def admin():
         flash('Por favor, inicia sesión para acceder al área de administración', 'warning')
         return redirect(url_for('login'))
     
-    return render_template('admin.html', usuario=session.get('usuario'), permisos=session.get('permisos'))
+    return render_template('admin.html', usuario=session.get('usuario'),
+                           permisos=session.get('permisos'),
+                           version=VERSION_APP, creador=CREATOR_APP)
 
+
+
+@app.route('/consultar-rag', methods=['POST'])
+def consultar_rag():
+    """API de consulta RAG — recupera docs de Elastic y genera respuesta con citación (S14)."""
+    try:
+        data = request.get_json()
+        consulta = data.get('consulta', '').strip()
+        if not consulta:
+            return jsonify({'success': False, 'error': 'Consulta vacía'}), 400
+
+        # 1. Recuperar candidatos desde Elasticsearch
+        query_elastic = {
+            "query": {
+                "multi_match": {
+                    "query": consulta,
+                    "fields": ["titulo_norma^3", "resumen^2", "texto", "temas.palabra^2"],
+                    "type": "best_fields"
+                }
+            }
+        }
+        resultado_elastic = elastic.buscar(
+            index=ELASTIC_INDEX_DEFAULT, query=query_elastic, size=20
+        )
+
+        hits = resultado_elastic.get('hits', {}).get('hits', [])
+        if not hits:
+            return jsonify({'success': True, 'respuesta': 'No se encontraron documentos relevantes.', 'fuentes': []})
+
+        # 2. Preparar corpus para RAG (usa resumen si existe, si no los primeros 3000 chars del texto)
+        documentos_rag = [
+            {
+                'id': hit['_id'],
+                'texto': hit['_source'].get('resumen') or hit['_source'].get('texto', '')[:3000],
+                'fuente': hit['_source'].get('nombre_archivo', hit['_id'])
+            }
+            for hit in hits
+            if hit['_source'].get('resumen') or hit['_source'].get('texto')
+        ]
+
+        if not documentos_rag:
+            return jsonify({'success': True, 'respuesta': 'Sin texto disponible.', 'fuentes': []})
+
+        # 3. Indexar y responder con RAG
+        rag = RAG(n_vecinos=min(6, len(documentos_rag)))
+        rag.indexar(documentos_rag)
+        resultado = rag.responder(consulta, n_docs=3, n_oraciones=3)
+
+        return jsonify({'success': True, **resultado})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ==================== MAIN ====================

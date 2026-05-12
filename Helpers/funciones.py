@@ -156,6 +156,9 @@ class Funciones:
             
         Returns:
             Texto extraído usando OCR
+            
+        Nota: Requiere que Poppler esté instalado en el sistema.
+              Ver INSTALLATION_GUIDE.md sección 3.6 para instrucciones.
         """
         try:
             from pdf2image import convert_from_path
@@ -170,7 +173,12 @@ class Funciones:
             
             return texto.strip()
         except Exception as e:
-            print(f"Error al extraer texto con OCR del PDF {ruta_pdf}: {e}")
+            error_msg = str(e)
+            if "poppler" in error_msg.lower():
+                print(f"Error al extraer texto con OCR del PDF {ruta_pdf}: Poppler no está instalado.")
+                print(f"   → Instale Poppler según las instrucciones en INSTALLATION_GUIDE.md (sección 3.6)")
+            else:
+                print(f"Error al extraer texto con OCR del PDF {ruta_pdf}: {e}")
             return ""
     
     @staticmethod

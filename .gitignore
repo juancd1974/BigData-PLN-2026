@@ -96,3 +96,5 @@ logs/
 # =============================================================
 static/uploads/*
 !static/uploads/.gitkeep
+static/docs/*
+!static/docs/.gitkeep

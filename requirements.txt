@@ -9,7 +9,7 @@ bcrypt
 
 # Bases de Datos
 pymongo
-elasticsearch>=8,<9
+elasticsearch
 
 # Web Scraping y Automatización
 requests
@@ -19,8 +19,8 @@ playwright
 
 # Procesamiento PDF / OCR
 PyPDF2
-pytesseract
-pdf2image
+pytesseract           # Requiere Poppler instalado para OCR (vea INSTALLATION_GUIDE.md sección 3.6)
+pdf2image            # Requiere Poppler instalado para OCR (vea INSTALLATION_GUIDE.md sección 3.6)
 Pillow
 
 # Ciencia de Datos y Procesamiento de Lenguaje Natural
@@ -29,6 +29,7 @@ numpy
 nltk
 scikit-learn>=1,<2
 spacy>=3,<4
+dateparser>=1.1
 
 # Embeddings y Modelos de Lenguaje
 torch>=2,<3

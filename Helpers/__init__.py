@@ -4,4 +4,5 @@ from .elastic import ElasticSearch
 #from .webScraping import WebScraping
 from .webScrapingMinAgricultura import WebScrapingMinAgricultura
 from .PLN import PLN
-__all__ = ['MongoDB', 'Funciones', 'ElasticSearch', 'WebScraping', 'PLN', 'WebScrapingMinAgricultura']
+from .RAG import RAG
+__all__ = ['MongoDB', 'Funciones', 'ElasticSearch', 'WebScraping', 'PLN', 'WebScrapingMinAgricultura', 'RAG']

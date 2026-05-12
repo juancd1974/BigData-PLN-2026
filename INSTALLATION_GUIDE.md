@@ -94,6 +94,7 @@ Para deshabilitar la autenticación en un entorno estrictamente local y de desar
 xpack.security.enabled: false
 ```
 
+
 ---
 
 ## 3. Entorno de Python
@@ -102,9 +103,7 @@ Ejecute los siguientes comandos desde la raíz del proyecto en PowerShell.
 
 ### 3.1 Crear el entorno virtual
 
-```powershell
-python -m venv venv
-```
+
 
 ### 3.2 Activar el entorno virtual
 
@@ -113,6 +112,12 @@ python -m venv venv
 ```
 
 El prefijo `(venv)` en el prompt indica que el entorno está activo.
+
+Para ejecutar desde una terminal en Visual Studio Code, primero se debe cambiar la política de ejecucion
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
 
 ### 3.3 Actualizar pip
 
@@ -137,6 +142,52 @@ El módulo `playwright` requiere un paso adicional para descargar los binarios d
 ```powershell
 playwright install chromium
 ```
+
+### 3.6 Poppler (Opcional - Requerido para OCR de PDFs)
+
+**¿Qué es Poppler?**  
+Poppler es una librería de código abierto que convierte archivos PDF a imágenes. Es **requerida** para la funcionalidad de OCR (reconocimiento óptico de caracteres) en PDFs escaneados o sin texto digital.
+
+**¿Cuándo es necesaria?**
+- Si la aplicación debe procesar PDFs escaneados (imágenes)
+- Si la extracción de texto normal falla y requiere OCR como fallback
+- Actualmente usada en el proceso de ingesta de documentos con web scraping
+
+**Instalación en Windows:**
+
+1. **Opción A: Usar Chocolatey (recomendado)**
+   ```powershell
+   choco install poppler
+   ```
+
+2. **Opción B: Descarga manual desde ossia**
+   - Descargue desde: https://blog.alivate.com.au/poppler-windows/
+   - O desde repositorio oficial: https://github.com/ossia/poppler-windows/releases/
+   - Extraiga el contenido en: `C:\Program Files\poppler`
+   - Agregue a PATH: `C:\Program Files\poppler\Library\bin`
+
+3. **Verificación de instalación:**
+   ```powershell
+   pdftotext --version
+   ```
+   Si el comando se ejecuta sin errores, Poppler está correctamente instalado.
+
+**Instalación en Linux (alternativa):**
+```bash
+# Ubuntu/Debian
+sudo apt-get install poppler-utils
+
+# CentOS/RHEL
+sudo yum install poppler-utils
+
+# macOS
+brew install poppler
+```
+
+**Nota:** Si Poppler no está instalado, la aplicación seguirá funcionando, pero:
+- Los PDFs escaneados no tendrán extracción de texto OCR
+- Solo se procesarán PDFs con texto digital (modo normal)
+- Estos archivos se registrarán como "fallidos en extracción" en los logs
 
 ---
 
@@ -182,6 +233,7 @@ ELASTIC_URL=http://localhost:9200
 ELASTIC_USER=elastic
 ELASTIC_PASSWORD=tu_password_local
 ELASTIC_INDEX_DEFAULT=index_minagricultura
+ELASTIC_REQUEST_TIMEOUT=20
 
 # Usuario administrador inicial
 APP_USER_ADMIN=<TU_USUARIO>
@@ -205,6 +257,7 @@ ELASTIC_URL=https://cluster-id.region.provider.elastic-cloud.com:9243
 ELASTIC_USER=elastic
 ELASTIC_PASSWORD=tu_password_cloud
 ELASTIC_INDEX_DEFAULT=index_minagricultura
+ELASTIC_REQUEST_TIMEOUT=20
 
 # Usuario administrador inicial
 APP_USER_ADMIN=<TU_USUARIO>
@@ -222,9 +275,25 @@ No es necesario cambiar el código al pasar de local a cloud: basta con ajustar 
 
 ---
 
-## 6. Inicializar la Base de Datos
+## 6. Inicializar Bases de Datos
 
-Antes del primer inicio de la aplicación, ejecute el script de inicialización para crear el usuario administrador en MongoDB con la contraseña encriptada:
+Antes del primer inicio de la aplicación, ejecute los scripts de inicialización.
+
+### 6.0 Opcion recomendada (un solo comando)
+
+```powershell
+python init_all.py
+```
+
+Este comando ejecuta en orden `init_db.py` y `init_elastic.py`.
+
+Si necesita recrear el indice de Elasticsearch durante una migración o ajuste de mappings:
+
+```powershell
+python init_all.py --recreate-elastic
+```
+
+### 6.1 Inicializar MongoDB (usuario administrador)
 
 ```powershell
 python init_db.py
@@ -232,7 +301,29 @@ python init_db.py
 
 El script leerá la configuración de `APP_USER_ADMIN` y `APP_USER_ADMIN_PASSWORD` desde el archivo `.env` y creará ese usuario con contraseña almacenada con hash seguro (`werkzeug.security`). Si el usuario ya existe, el script no realiza ningún cambio (es idempotente).
 
-> **Importante:** Use credenciales seguras y únicas para el usuario administrador desde el primer arranque.
+### 6.2 Inicializar Elasticsearch (indice principal)
+
+```powershell
+python init_elastic.py
+```
+
+Este script crea el indice definido en `ELASTIC_INDEX_DEFAULT` con settings y mappings base para la aplicación. Si el indice ya existe, no realiza cambios (idempotente).
+
+Debe ejecutarlo en estos casos:
+
+- Primera instalación del proyecto.
+- Cambio de mappings/settings del indice.
+- Eliminación manual del indice.
+
+No necesita ejecutarlo si el indice ya existe y no hubo cambios de esquema.
+
+Si necesita reconstruirlo desde cero:
+
+```powershell
+python init_elastic.py --recreate
+```
+
+> **Importante:** Use `--recreate` solo en ambientes de desarrollo o cuando tenga respaldo de los datos, porque elimina y vuelve a crear el indice.
 
 ---
 
