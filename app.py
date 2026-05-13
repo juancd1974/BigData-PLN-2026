@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for,jsonify, session, flash
+from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
 from dotenv import load_dotenv
 import os
 import glob
@@ -849,6 +849,168 @@ def procesar_webscraping_elastic():
         return jsonify({"success": False, "message": str(e) if str(e) else "Error en Playwright (ver consola)"}), 500
 
 #--------------rutas de elasitcsearch - fin-------------
+
+@app.route('/subir-pdfs-carpeta', methods=['POST'])
+def subir_pdfs_carpeta():
+    """Recibe PDFs del cliente y los guarda en uploads/carpeta_local/ para procesarlos."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+    if 'archivos' not in request.files:
+        return jsonify({'success': False, 'error': 'No se recibieron archivos'}), 400
+
+    carpeta_destino = os.path.join('static', 'uploads', 'carpeta_local')
+    os.makedirs(carpeta_destino, exist_ok=True)
+    for f in os.listdir(carpeta_destino):           # limpiar subidas anteriores
+        os.remove(os.path.join(carpeta_destino, f))
+
+    guardados = []
+    for archivo in request.files.getlist('archivos'):
+        if archivo.filename.lower().endswith('.pdf'):
+            nombre = secure_filename(archivo.filename)
+            ruta_completa = os.path.join(carpeta_destino, nombre)
+            archivo.save(ruta_completa)
+            guardados.append({'nombre': nombre, 'ruta': ruta_completa,
+                              'extension': 'pdf', 'tamaño': os.path.getsize(ruta_completa)})
+
+    return jsonify({'success': True, 'archivos': guardados, 'ruta': carpeta_destino})
+
+
+@app.route('/listar-carpeta-local', methods=['POST'])
+def listar_carpeta_local():
+    """Lista los PDFs encontrados en una carpeta local del servidor."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+
+    ruta = (request.get_json() or {}).get('ruta', '').strip()
+    if not ruta:
+        return jsonify({'success': False, 'error': 'Ruta no especificada'}), 400
+    if not os.path.isdir(ruta):
+        return jsonify({'success': False, 'error': f'La ruta no existe o no es una carpeta válida'}), 400
+
+    archivos = []
+    for nombre in sorted(os.listdir(ruta)):
+        if nombre.lower().endswith('.pdf'):
+            ruta_completa = os.path.join(ruta, nombre)
+            archivos.append({
+                'nombre': nombre,
+                'ruta': ruta_completa,
+                'extension': 'pdf',
+                'tamaño': os.path.getsize(ruta_completa)
+            })
+
+    return jsonify({'success': True, 'archivos': archivos,
+                    'mensaje': f'Se encontraron {len(archivos)} archivos PDF'})
+
+
+@app.route('/indexar-carpeta-local')
+def indexar_carpeta_local():
+    """SSE: procesa e indexa PDFs de una carpeta local con progreso en tiempo real."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+
+    ruta    = request.args.get('ruta', '').strip()
+    index   = request.args.get('index', '').strip()
+    nombres = [n for n in request.args.get('archivos', '').split('|') if n]
+
+    if not ruta or not os.path.isdir(ruta) or not index:
+        return jsonify({'error': 'Parámetros inválidos'}), 400
+
+    def evento(tipo, **kwargs):
+        import json as _json
+        return f"data: {_json.dumps({'tipo': tipo, **kwargs})}\n\n"
+
+    def generate():
+        archivos_validos = [n for n in nombres if os.path.exists(os.path.join(ruta, n))]
+        total = len(archivos_validos)
+        yield evento('inicio', total=total)
+
+        if not archivos_validos:
+            yield evento('fin', indexados=0, errores=0, omitidos=0)
+            return
+
+        pln = PLN(cargar_modelos=True)
+        indexados = errores = omitidos = 0
+
+        for i, nombre in enumerate(archivos_validos, 1):
+            ruta_pdf = os.path.join(ruta, nombre)
+
+            # ── Deduplicación por hash
+            yield evento('progreso', archivo=nombre, num=i, total=total, fase='Verificando duplicado')
+            hash_archivo = Funciones.calcular_hash_archivo(ruta_pdf)
+            if elastic.existe_hash(hash_archivo, index):
+                omitidos += 1
+                yield evento('omitido', archivo=nombre, num=i, total=total)
+                continue
+
+            # ── Extracción de texto
+            yield evento('progreso', archivo=nombre, num=i, total=total, fase='Extrayendo texto')
+            texto = Funciones.extraer_texto_pdf(ruta_pdf)
+            if not texto or len(texto.strip()) < 50:
+                yield evento('progreso', archivo=nombre, num=i, total=total, fase='Intentando OCR')
+                try:
+                    texto = Funciones.extraer_texto_pdf_ocr(ruta_pdf)
+                except Exception:
+                    texto = ''
+
+            if not texto or len(texto.strip()) < 50:
+                errores += 1
+                yield evento('error', archivo=nombre, num=i, total=total, razon='Sin texto extraíble')
+                continue
+
+            # ── PLN
+            n_segmentos = max(1, len(texto) // 3000)
+            yield evento('progreso', archivo=nombre, num=i, total=total,
+                         fase=f'Procesando con PLN ({n_segmentos} segmento(s) ~{n_segmentos * 30}–{n_segmentos * 60}s)')
+            try:
+                resultado_pln = pln.procesar_texto_largo(texto)
+                meta          = pln.extraer_metadatos_norma(texto)
+                fecha_norm    = pln.normalizar_fecha(meta.get('fecha_documento'))
+                temas_conv    = [{'palabra': p, 'relevancia': float(r)}
+                                 for p, r in resultado_pln.get('temas', [])]
+
+                documento = {
+                    'tipo_norma':      meta.get('tipo_norma'),
+                    'numero_norma':    meta.get('numero_norma'),
+                    'anio_norma':      meta.get('anio_norma'),
+                    'entidad_emisora': meta.get('entidad_emisora'),
+                    'fecha_documento': fecha_norm,
+                    'titulo_norma':    meta.get('titulo_norma'),
+                    'texto':           texto[:2_000_000],
+                    'resumen':         resultado_pln.get('resumen', ''),
+                    'entidades':       resultado_pln.get('entidades', {}),
+                    'temas':           temas_conv,
+                    'ruta':            ruta_pdf,
+                    'nombre_archivo':  nombre,
+                    'hash_archivo':    hash_archivo,
+                    'fecha_carga':     datetime.now().isoformat()
+                }
+
+                # ── Indexar
+                yield evento('progreso', archivo=nombre, num=i, total=total, fase='Indexando en Elastic')
+                res = elastic.indexar_bulk(index, [documento])
+                if res['success']:
+                    indexados += 1
+                    yield evento('ok', archivo=nombre, num=i, total=total)
+                else:
+                    errores += 1
+                    yield evento('error', archivo=nombre, num=i, total=total, razon='Error al indexar')
+
+            except Exception as e:
+                errores += 1
+                yield evento('error', archivo=nombre, num=i, total=total, razon=str(e)[:120])
+
+        pln.close()
+        yield evento('fin', indexados=indexados, errores=errores, omitidos=omitidos)
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
 
 @app.route('/logout')
 def logout():

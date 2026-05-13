@@ -36,3 +36,5 @@ torch>=2,<3
 transformers>=4,<5
 sentence-transformers>=2.7,<4
 huggingface-hub>=0.14.1,<1
+protobuf>=3.20          # requerido por sentencepiece (tokenizador de mT5/mBART)
+sentencepiece>=0.1.99   # tokenizador para modelos mT5 de Google

@@ -1,6 +1,7 @@
 # PLN 2026-1S — S4: spaCy NER/POS + dateparser · S13: HuggingFace Transformers · S14: sentence-transformers
 import numpy as np
 import re
+import time
 import spacy
 import dateparser
 from collections import Counter
@@ -9,20 +10,22 @@ from typing import List, Dict, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
+# Modelo de resumen abstractivo — S13, notebook tabla, multilingüe con soporte español
+_MODELO_RESUMEN = 'google/mt5-small'
+
 
 class PLN:
     """Procesamiento de lenguaje natural sobre normatividad en español."""
 
     def __init__(self, modelo_spacy: str = 'es_core_news_lg',
                  modelo_embeddings: str = 'paraphrase-multilingual-MiniLM-L12-v2',
-                 modelo_resumen: str = 'IIC/mt5-small-spanish-summarization',
                  cargar_modelos: bool = True):
         self.modelo_spacy_nombre = modelo_spacy
         self.modelo_embeddings_nombre = modelo_embeddings
-        self.modelo_resumen_nombre = modelo_resumen
         self.nlp = None
         self.model_embeddings = None
-        self._pipeline_resumen = None    # carga lazy al primer uso
+        self._pipeline_resumen = None       # carga lazy al primer uso
+        self._modelo_resumen_activo = None  # nombre del modelo que cargó exitosamente
 
         if cargar_modelos:
             self._cargar_modelos()
@@ -193,41 +196,79 @@ class PLN:
     # ── S13: resumen abstractivo con HuggingFace — map-reduce para documentos largos
     def generar_resumen_abstractivo(self, texto: str,
                                     max_length: int = 150,
-                                    min_length: int = 40,
+                                    min_length: int = 10,
                                     chunk_chars: int = 3000) -> str:
         """Resumen abstractivo con HuggingFace Transformers (S13).
 
-        Documentos largos se dividen en chunks, se resume cada uno (map)
-        y se hace un resumen final de los resúmenes (reduce).
+        Intenta cargar modelos en orden (_MODELOS_RESUMEN). Si ninguno está
+        disponible cae a un resumen extractivo de las primeras oraciones.
+        Documentos largos usan map-reduce: resume chunks y luego los resume.
         """
         if self._pipeline_resumen is None:
-            from transformers import pipeline
-            print(f"Cargando modelo '{self.modelo_resumen_nombre}'...")
-            self._pipeline_resumen = pipeline(
-                "summarization", model=self.modelo_resumen_nombre
-            )
+            from transformers import pipeline, AutoTokenizer
+            import torch
+            try:
+                print(f"Cargando modelo de resumen '{_MODELO_RESUMEN}'...")
+                # use_fast=False: tokenizador rust no existe para mT5
+                # legacy=True: evita el aviso de comportamiento heredado de T5Tokenizer
+                tokenizer = AutoTokenizer.from_pretrained(_MODELO_RESUMEN,
+                                                          use_fast=False, legacy=True)
+                if torch.cuda.is_available():
+                    device = 0
+                    print("  → GPU detectada: usando CUDA")
+                elif torch.backends.mps.is_available():
+                    device = 'mps'
+                    print("  → GPU detectada: usando Apple MPS")
+                else:
+                    device = -1
+                    print("  → Sin GPU — usando CPU (inferencia lenta)")
+                self._pipeline_resumen = pipeline("summarization", model=_MODELO_RESUMEN,
+                                                  tokenizer=tokenizer, device=device)
+                self._modelo_resumen_activo = _MODELO_RESUMEN
+                print(f"  ✓ Modelo '{_MODELO_RESUMEN}' cargado")
+            except Exception as e:
+                print(f"  ✗ Modelo de resumen no disponible: {e}")
+                self._pipeline_resumen = False  # no reintentar en el mismo proceso
+
+        if not self._pipeline_resumen:
+            return ""  # modelo no disponible, sin resumen
+
+        # mT5 usa formato text-to-text: requiere prefijo de tarea
+        usa_prefijo = 't5' in _MODELO_RESUMEN.lower()
+
+        def _resumir(fragmento: str) -> str:
+            entrada = f"summarize: {fragmento}" if usa_prefijo else fragmento
+            # max_new_tokens controla solo tokens generados; max_length controla total (entrada+salida)
+            r = self._pipeline_resumen(entrada, max_new_tokens=max_length,
+                                       min_length=min_length, do_sample=False)
+            return r[0]['summary_text']
 
         # MAP: resumir cada chunk por separado
-        chunks = [texto[i:i + chunk_chars]
-                  for i in range(0, len(texto), chunk_chars)]
-        resumenes = []
-        for chunk in chunks:
-            if len(chunk.strip()) < 100:    # ignorar chunks residuales muy pequeños
-                continue
-            r = self._pipeline_resumen(chunk, max_length=max_length,
-                                       min_length=min_length, do_sample=False)
-            resumenes.append(r[0]['summary_text'])
+        chunks = [texto[i:i + chunk_chars] for i in range(0, len(texto), chunk_chars)]
+        chunks_validos = [c for c in chunks if len(c.strip()) >= 100]
+        total_chunks = len(chunks_validos)
+        print(f"  → Resumiendo {total_chunks} segmento(s) (~{total_chunks * 30}–{total_chunks * 60}s en CPU)")
 
+        resumenes = []
+        for idx, chunk in enumerate(chunks_validos, 1):
+            t0 = time.time()
+            print(f"     Segmento {idx}/{total_chunks}...", end='', flush=True)
+            resumenes.append(_resumir(chunk))
+            print(f" ✓ {time.time() - t0:.1f}s")
+
+        if not resumenes:
+            return ""
         if len(resumenes) == 1:
             return resumenes[0]
 
         # REDUCE: resumir el texto combinado de los resúmenes parciales
         texto_combinado = ' '.join(resumenes)
         if len(texto_combinado) > chunk_chars:
-            r = self._pipeline_resumen(texto_combinado[:chunk_chars],
-                                       max_length=max_length,
-                                       min_length=min_length, do_sample=False)
-            return r[0]['summary_text']
+            print(f"     Reduce final...", end='', flush=True)
+            t0 = time.time()
+            resultado = _resumir(texto_combinado[:chunk_chars])
+            print(f" ✓ {time.time() - t0:.1f}s")
+            return resultado
         return texto_combinado
 
     # ── S14: embeddings semánticos (384 dims) — base para búsqueda RAG
@@ -292,7 +333,7 @@ class PLN:
             ents = self.extraer_entidades(parte)
             for key in entidades_total:
                 entidades_total[key].extend(ents[key])
-            resumen_total.append(self.generar_resumen_abstractivo(parte, max_length=80, min_length=20))
+            resumen_total.append(self.generar_resumen_abstractivo(parte, max_length=80, min_length=10))
 
         for key in entidades_total:
             entidades_total[key] = list(dict.fromkeys(entidades_total[key]))
