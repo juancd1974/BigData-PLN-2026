@@ -3,9 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-sca  le=1.0">
-    <title>BigData-JuanCDG</title>
+    <title>NormaSearch</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
     <link href="{{ url_for('static', filename='css/landingPage.css') }}" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
@@ -14,13 +15,14 @@
     <header class="header">
         <div class="container">
             <div class="d-flex justify-content-between align-items-center">
-                <h1 class="h3 mb-0">Min Agricultura Big Data</h1>
+                <h1 class="h3 mb-0">NormaSearch</h1>
                 <nav>
                     <ul class="nav">
+                        <li class="nav-item"><a class="nav-link" href="/">Inicio</a></li>
                         <li class="nav-item"><a class="nav-link" href="/buscador">Buscador</a></li>
                         <li class="nav-item"><a class="nav-link" href="/about">Acerca de</a></li>
                         {% if session.get('logged_in') %}
-                        <li class="nav-item"><a class="nav-link" href="/admin">Panel admin [{{ session.get('usuario') }}]</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/admin">Panel admin</a></li>
                         <li class="nav-item"><a class="nav-link" href="/logout">Cerrar sesión</a></li>
                         {% else %}
                         <li class="nav-item"><a class="nav-link" href="/login">Ingresar</a></li>
@@ -33,27 +35,58 @@
 
     <main class="main">
         <div class="container">
-            <h1 class="text-center">
-                Bienvenidos al proyecto de BigData<br> 
-            </h1>
-            <p>
-                Creado por Juan Carlos Díaz González,
-                como parte del proyecto de clase
-                en la Maestría de Analítica de Datos
-                De la Universidad Central
-            </p>
+            <h1 class="text-center mb-2">NormaSearch</h1>
+            <p class="text-center mb-4" style="color: var(--texto-secundario); font-size:1.1rem; word-wrap:break-word;">Motor de búsqueda semántica para normatividad colombiana</p>
+
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <div class="card h-100 p-3">
+                        <div class="d-flex align-items-start gap-3">
+                            <i class="bi bi-search" style="font-size:2rem; color:var(--azul-acento); flex-shrink:0;"></i>
+                            <div style="text-align:left;">
+                                <h5 class="mb-1">Búsqueda Semántica</h5>
+                                <p class="text-muted small mb-0" style="text-align:left;">Encuentra documentos por similitud de conceptos, no solo por palabras exactas.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card h-100 p-3">
+                        <div class="d-flex align-items-start gap-3">
+                            <i class="bi bi-chat-left-dots" style="font-size:2rem; color:var(--azul-acento); flex-shrink:0;"></i>
+                            <div style="text-align:left;">
+                                <h5 class="mb-1">Consulta con RAG</h5>
+                                <p class="text-muted small mb-0" style="text-align:left;">Responde preguntas en lenguaje natural generando respuestas a partir del corpus normativo.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card h-100 p-3">
+                        <div class="d-flex align-items-start gap-3">
+                            <i class="bi bi-tags" style="font-size:2rem; color:var(--azul-acento); flex-shrink:0;"></i>
+                            <div style="text-align:left;">
+                                <h5 class="mb-1">Extracción de Entidades</h5>
+                                <p class="text-muted small mb-0" style="text-align:left;">Identifica automáticamente instituciones, fechas y zonas geográficas en cada norma.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center">
+                <a href="/buscador" class="btn btn-primary boton_buscar px-4 py-2 fs-5">Ir al Buscador</a>
+            </div>
         </div>
     </main>
     
     <footer class="footer text-center">
-        <p class="mb-0">Creado por {{ creador }}</p>
-        <p class="mb-0" id="current-year"></p>
-        <p class="mb-0" id="version_app">{{ version }}</p>
+        <p class="mb-0">NormaSearch © 2026 — Juan Carlos Díaz González</p>
+        <p class="mb-0">Maestría en Analítica de Datos · Universidad Central</p>
+        <p class="mb-0">v3.0.0</p>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
-    <script>
-        document.getElementById('current-year').textContent = new Date().getFullYear();
-    </script>
+
 </body>
 </html> 

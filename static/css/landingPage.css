@@ -1,5 +1,22 @@
+/* ── Variables de color — paleta azul institucional ─────────────────────────── */
+:root {
+    --azul-marino:   #1a3a5c;
+    --azul-medio:    #1e4d7b;
+    --azul-acento:   #2563eb;
+    --azul-hover:    #1d4ed8;
+    --azul-claro:    #dbeafe;
+    --nav-link-hover:#93c5fd;
+    --fondo-pagina:  #dce3ed;
+    --fondo-card:    #ffffff;
+    --fondo-input:   #f8fafc;
+    --borde:         #e2e8f0;
+    --texto-principal:#1e293b;
+    --texto-secundario:#475569;
+    --sombra:        0 6px 24px rgba(0,0,0,0.14);
+    --azul-suave:    #e8eef8;
+}
 
-*{
+* {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -9,241 +26,184 @@ body {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
-    font-family: 'poppins', sans-serif;
-    background: linear-gradient(135deg, #f7f3ee, #efe8e1);
-    color: #4f463d;
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--fondo-pagina);
+    color: var(--texto-principal);
 }
 
+/* ── Header ─────────────────────────────────────────────────────────────────── */
 .header {
-    background-color: #e8dfd6;
+    background-color: var(--azul-marino);
     padding: 1rem 0;
-    border-bottom: 1px solid #C6D2DD;
     width: 100%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.2);
 }
 
 .header .container {
     width: 100%;
     max-width: 1200px;
     margin: 0 auto;
-    padding: 0 1rem;
+    padding: 0 1.5rem;
 }
 
-.main {
-    background-color: #f4ede7;
-    padding: 3rem 0;
-    flex: 1;
-    border-top: 1px solid transparent;
-}
-
-.main .container {
-    background-color: #f0e7df;
-    width: 80%;
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 16px;
-    border-radius: 10px;
-    border: 1px solid #c5b9ae;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-}
-
-.main .container h1{
-    font-family: 'poppins', sans-serif;
-    font-size: 2rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
+.header h1,
+.header h2 {
+    font-size: 1.4rem;
     font-weight: 600;
-}
-
-.main .container p{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.6rem;
-    color: #6b5e52;
-    text-align: justify;
-    line-height: 1.6;
-    margin-top: 1rem;
-}
-
-.header h1 {
-    font-family: 'poppins', sans-serif;
-    font-size: 1.5rem;
-    font-weight: 600;
-    color: #4f463d;
+    color: #ffffff;
     margin: 0;
 }
 
-.nav{
+.nav {
     list-style: none;
     display: flex;
-    gap: 1rem;
+    gap: 1.5rem;
 }
 
 .nav-link {
-    font-family: 'poppins', sans-serif;
     text-decoration: none;
-    color: #6b5e52;
-    font-weight: 600;
+    color: #cbd5e1;
+    font-weight: 500;
+    font-size: 0.95rem;
+    transition: color 0.2s;
 }
 
 .nav-link:hover {
-    color: #4f463d;
+    color: var(--nav-link-hover);
 }
 
-.buscador_1 {
-    background: #f1f1e8;
-    padding: 18px;
-    border: 1px solid #e7d9c4;
-}
-
-.input_texto {
-    font-family: 'poppins', sans-serif;
-    color: #6b5e52;
-    padding: 10px;
-    border-radius: 6px;
-}
-
-.boton_buscar {
-    font-family: 'poppins', sans-serif;
-    background-color: #6b5e52;
-    border: none;
-    color: #fff;
-    cursor: pointer;
-}
-
-.boton_buscar:hover {
-    background-color: #4f463d;
-}
-
-.resultados_busqueda {
-    background: #f1f1e8;
-    padding: 18px;
-    border: 1px solid #e7d9c4;
-}
-
-.main .container_2 {
-    background-color: #f0e7df;
-    width: auto;
-    height: auto;
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 16px;
-    border-radius: 10px;
-    border: 1px solid #c5b9ae;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-}
-
-.main .container_2 h1{
-    font-family: 'poppins', sans-serif;
-    font-size: 2rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
-}
-
-.main .container_2 h3{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.5rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
-    margin-top: 1rem;
-}
-
-.main .container_2 h4{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.5rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
-    margin-top: 1rem;
-}
-
-.main .container_2 p{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.4rem;
-    color: #6b5e52;
-    text-align: justify;
-    line-height: 1.6;
-    margin-top: 1rem;
-}
-
-.main .container_2 .datos_finales {
-    font-family: 'poppins', sans-serif;
-    font-size: 1.25rem;
-    color: #6b5e52;
-    text-align: center;
-    line-height: 1.6;
-    margin-top: 0.5rem;
-}
-
-.main_2 {
-    background-color: #f4ede7;
+/* ── Main — página principal ─────────────────────────────────────────────────── */
+.main {
+    background-color: var(--fondo-pagina);
     padding: 3rem 0;
     flex: 1;
-    border-top: 1px solid transparent;
 }
 
-.main_2 .container {
-    background-color: #f0e7df;
+.main .container {
+    background-color: var(--fondo-card);
     width: 80%;
     max-width: 900px;
     margin: 0 auto;
-    padding: 16px;
+    padding: 2rem;
     border-radius: 10px;
-    border: 1px solid #c5b9ae;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-}
-.main_2 .container h1{
-    font-family: 'poppins', sans-serif;
-    font-size: 2rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
+    border: 1px solid var(--borde);
+    box-shadow: var(--sombra);
 }
 
-.main_2 .container h3{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.5rem;
-    color: #4f463d;
+.main .container h1 {
+    font-size: 1.9rem;
+    color: var(--azul-marino);
     text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
-    margin-top: 1rem;
+    line-height: 1.5;
+    font-weight: 700;
 }
 
-.main_2 .container h4{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.5rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
-    margin-top: 1rem;
-}
-
-.main_2 .container h5{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.4rem;
-    color: #4f463d;
-    text-align: center;
-    line-height: 1.6;
-    font-weight: 600;
-    margin-top: 1rem;
-}
-
-.main_2 .container p{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.6rem;
-    color: #6b5e52;
+.main .container p {
+    font-size: 1.05rem;
+    color: var(--texto-secundario);
     text-align: justify;
-    line-height: 1.6;
+    line-height: 1.7;
     margin-top: 1rem;
 }
 
+/* ── Main 2 — páginas internas ──────────────────────────────────────────────── */
+.main_2 {
+    background-color: var(--fondo-pagina);
+    padding: 2rem 0;
+    flex: 1;
+}
+
+.main_2 .container {
+    background-color: var(--fondo-card);
+    width: 90%;
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 2rem;
+    border-radius: 10px;
+    border: 1px solid var(--borde);
+    box-shadow: var(--sombra);
+}
+
+.main_2 .container h1 {
+    font-size: 1.7rem;
+    color: var(--azul-marino);
+    text-align: center;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.main_2 .container h3 {
+    font-size: 1.3rem;
+    color: var(--azul-marino);
+    text-align: center;
+    font-weight: 600;
+    line-height: 1.5;
+    margin-top: 1rem;
+}
+
+.main_2 .container h4 {
+    font-size: 1.15rem;
+    color: var(--texto-principal);
+    text-align: center;
+    font-weight: 600;
+    margin-top: 1rem;
+}
+
+.main_2 .container h5 {
+    font-size: 1.05rem;
+    color: var(--texto-principal);
+    text-align: center;
+    font-weight: 600;
+    margin-top: 1rem;
+}
+
+.main_2 .container p {
+    font-size: 1rem;
+    color: var(--texto-secundario);
+    text-align: justify;
+    line-height: 1.7;
+    margin-top: 1rem;
+}
+
+/* ── Cards internas (buscador, formularios) ─────────────────────────────────── */
+.buscador_1 {
+    background: var(--azul-suave);
+    padding: 18px;
+    border: 1px solid var(--borde);
+    border-radius: 8px;
+}
+
+.resultados_busqueda {
+    background: var(--azul-suave);
+    padding: 18px;
+    border: 1px solid var(--borde);
+    border-radius: 8px;
+}
+
+/* ── Inputs ─────────────────────────────────────────────────────────────────── */
+.input_texto {
+    color: var(--texto-principal);
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid var(--borde);
+}
+
+/* ── Botones principales ────────────────────────────────────────────────────── */
+.boton_buscar {
+    background-color: var(--azul-acento);
+    border: none;
+    color: #fff;
+    cursor: pointer;
+    border-radius: 6px;
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+.boton_buscar:hover {
+    background-color: var(--azul-hover);
+}
+
+/* ── Botones acción tabla ───────────────────────────────────────────────────── */
 .estilo_boton {
     display: flex;
     justify-content: center;
@@ -262,73 +222,167 @@ body {
 
 .boton_editar {
     width: 100%;
-    background-color: #f0ad4e;
+    background-color: #f59e0b;
     border: none;
     color: #fff;
     padding: 3px 6px;
-    border-radius: 2px;
+    border-radius: 4px;
     text-align: center;
     cursor: pointer;
 }
 
 .boton_eliminar {
     width: 100%;
-    background-color: #d9534f;
+    background-color: #dc2626;
     border: none;
     color: #fff;
     padding: 3px 6px;
-    border-radius: 2px;
+    border-radius: 4px;
     text-align: center;
     cursor: pointer;
 }
 
-.boton_git{
-    background-color: #2b3137;
+/* ── Botones redes sociales ─────────────────────────────────────────────────── */
+.boton_git {
+    background-color: #24292e;
     color: #ffffff;
 }
 
-.boton_linkdin{
+.boton_linkdin {
     background-color: #0077B5;
     color: #ffffff;
 }
 
-.boton_twit{
+.boton_twit {
     background-color: #000000;
     color: #ffffff;
 }
 
+/* ── Contenedor creación (formularios pequeños) ─────────────────────────────── */
 .container_creacion {
-    background-color: #f0e7df;
+    background-color: var(--fondo-card);
     width: auto;
-    height: auto;
     max-width: 500px;
     margin: 0 auto;
-    padding: 16px;
+    padding: 1.5rem;
     border-radius: 10px;
-    border: 1px solid #c5b9ae;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--borde);
+    box-shadow: var(--sombra);
 }
 
-.container_creacion h5{
-    font-family: 'poppins', sans-serif;
-    font-size: 1.5rem;
-    color: #4f463d;
+.container_creacion h5 {
+    font-size: 1.3rem;
+    color: var(--azul-marino);
     text-align: center;
-    line-height: 1.6;
     font-weight: 600;
     margin-top: 1rem;
 }
 
+/* ── Container_2 (about / páginas secundarias) ──────────────────────────────── */
+.main .container_2 {
+    background-color: var(--fondo-card);
+    width: auto;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 1.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--borde);
+    box-shadow: var(--sombra);
+}
+
+.main .container_2 h1 {
+    font-size: 1.9rem;
+    color: var(--azul-marino);
+    text-align: center;
+    font-weight: 700;
+    line-height: 1.5;
+}
+
+.main .container_2 h3 {
+    font-size: 1.3rem;
+    color: var(--azul-marino);
+    text-align: center;
+    font-weight: 600;
+    margin-top: 1rem;
+}
+
+.main .container_2 h4 {
+    font-size: 1.15rem;
+    color: var(--texto-principal);
+    text-align: center;
+    font-weight: 600;
+    margin-top: 1rem;
+}
+
+.main .container_2 p {
+    font-size: 1rem;
+    color: var(--texto-secundario);
+    text-align: justify;
+    line-height: 1.7;
+    margin-top: 1rem;
+}
+
+.main .container_2 .datos_finales {
+    font-size: 1rem;
+    color: var(--texto-secundario);
+    text-align: center;
+    line-height: 1.6;
+    margin-top: 0.5rem;
+}
+
+/* ── Tabs del buscador ──────────────────────────────────────────────────────── */
+#tabsModo {
+    border-bottom: 2px solid #1a3a5c;
+    gap: 4px;
+}
+
+#tabsModo .nav-link {
+    border-radius: 6px 6px 0 0;
+    font-weight: 500;
+    font-size: 0.95rem;
+    padding: 0.55rem 1.4rem;
+    border: 1px solid transparent;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+#tabsModo .nav-link.active {
+    background-color: #ffffff;
+    color: #1e293b;
+    border-color: #cbd5e1 #cbd5e1 transparent;
+    border-bottom: 3px solid #1a3a5c;
+    font-weight: 600;
+}
+
+#tabsModo .nav-link:not(.active) {
+    background-color: #7f96ad;
+    color: #1e293b;
+    border-color: transparent;
+}
+
+#tabsModo .nav-link:not(.active):hover {
+    background-color: #5d7d99;
+    color: #0f172a;
+    cursor: pointer;
+}
+
+/* ── Tarjetas de la página de inicio ────────────────────────────────────────── */
+.main .container .card {
+    background-color: var(--azul-suave);
+}
+
+/* ── Encabezados de tablas (todos) ─────────────────────────────────────────── */
+thead.table-dark {
+    --bs-table-bg: var(--azul-marino) !important;
+    background-color: var(--azul-marino) !important;
+}
+
+/* ── Footer ─────────────────────────────────────────────────────────────────── */
 .footer {
-    font-family: 'poppins', sans-serif;
-    background-color: #d9cec3;
+    background-color: var(--azul-marino);
     padding: 1.2rem;
     text-align: center;
-    border-top: 1px solid rgba(0, 0, 0, 0.05);
-    color: #4f463d;
-    font-size: 0.9rem;
-    margin-bottom: 0.3rem;
-    border: none;
-    outline: none;
+    color: #94a3b8;
+    font-size: 0.85rem;
     margin: 0;
+    border-top: 1px solid var(--azul-medio);
 }

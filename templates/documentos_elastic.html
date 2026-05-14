@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cargar Documentos - Min Agricultura PLN</title>
+    <title>NormaSearch — Carga de Documentos</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <link href="{{ url_for('static', filename='css/landingPage.css') }}" rel="stylesheet">
@@ -29,10 +29,13 @@
     <header class="header">
         <div class="container">
             <div class="d-flex justify-content-between align-items-center">
-                <h2 class="h3 mb-0">Min Agricultura PLN <b>[{{ usuario }}]</b></h2>
+                <h2 class="h3 mb-0">NormaSearch <b>[{{ usuario }}]</b></h2>
                 <nav>
                     <ul class="nav">
-                        <li class="nav-item"><a class="nav-link" href="/admin">Volver al Admin</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/">Inicio</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/buscador">Buscador</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/about">Acerca de</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/admin">Panel admin</a></li>
                         <li class="nav-item"><a class="nav-link" href="/logout">Cerrar sesión</a></li>
                     </ul>
                 </nav>
@@ -91,7 +94,7 @@
                         <div class="input-group">
                             <input type="text" class="form-control" id="nombre_carpeta" readonly
                                    placeholder="Ninguna carpeta seleccionada">
-                            <button class="btn btn-outline-secondary" type="button"
+                            <button class="btn btn-primary boton_buscar" type="button"
                                     onclick="document.getElementById('input_carpeta').click()">
                                 <i class="bi bi-folder2-open"></i> Examinar
                             </button>
@@ -202,15 +205,13 @@
     </main>
 
     <footer class="footer text-center mt-5">
-        <p class="mb-0">Creado por {{ creador }}</p>
-        <p class="mb-0" id="current-year"></p>
-        <p class="mb-0">{{ version }}</p>
+        <p class="mb-0">NormaSearch © 2026 — Juan Carlos Díaz González</p>
+        <p class="mb-0">Maestría en Analítica de Datos · Universidad Central</p>
+        <p class="mb-0">v3.0.0</p>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
     <script>
-        document.getElementById('current-year').textContent = new Date().getFullYear();
-
         // ── Estado global ────────────────────────────────────────────────────────────
         let archivosActuales = [];
         let metodoActual = 'carpeta';
