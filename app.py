@@ -6,7 +6,7 @@ import time
 import subprocess
 from datetime import datetime
 from werkzeug.utils import secure_filename
-from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN, RAG
+from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException
 import warnings
@@ -122,7 +122,8 @@ def ensure_elasticsearch_ready(max_wait_seconds=15):
 ensure_elasticsearch_ready(max_wait_seconds=int(os.getenv('ELASTIC_STARTUP_TIMEOUT', 120)))
 mongo = MongoDB(MONGO_URI, MONGO_DB)
 mongo.verificar_colecciones(MONGO_COLECCION)
-elastic = ElasticSearch(ELASTIC_URL, ELASTIC_USER, ELASTIC_PASSWORD)
+elastic      = ElasticSearch(ELASTIC_URL, ELASTIC_USER, ELASTIC_PASSWORD)
+pln_busqueda = PLN(cargar_modelos=True)
 
 # ==================== RUTAS ====================
 @app.route('/')
@@ -150,7 +151,7 @@ def buscar_elastic():
         #campo = data.get('campo', '_all') # _opciones (traidos de un select del formulario): titulo, contenido, autor, fecha_creacion
         #campo = 'texto'
         pagina = int(data.get("pagina", 1))
-        tamano_pagina = int(data.get("tamano_pagina", 10))
+        tamano_pagina = int(data.get("tamano_pagina", 20))
         
         '''
         if not texto_buscar:
@@ -280,8 +281,12 @@ def buscar_elastic():
             aggs=aggs,
             size=tamano_pagina
         )
-        #print(resultado) 
-        
+
+        if resultado.get('success') and resultado.get('resultados'):
+            resultado['resultados'] = pln_busqueda.buscar_conceptual(
+                texto_buscar, resultado['resultados'], campo_texto='texto'
+            )
+
         return jsonify(resultado)
         
     except Exception as e:
@@ -683,10 +688,10 @@ def cargar_documentos_elastic():
                 if extension == 'pdf':
                     # Intentar extracción normal
                     texto = Funciones.extraer_texto_pdf(ruta)
-                    if texto and len(texto.strip()) >= 50:
-                        print(f" → Texto extraído (longitud {len(texto)} caracteres): ✓")
+                    if texto and Funciones._calidad_texto(texto):
+                        print(f" → Texto extraído ({len(texto)} chars): ✓")
                     else:
-                        print(f" → Texto extraído (longitud {len(texto)} caracteres): ✗ (insuficiente, intentando OCR...)")
+                        print(f" → Texto extraído ({len(texto)} chars): calidad baja, intentando OCR...")
                         
                         # Si no se extrajo texto suficiente, intentar con OCR
                         try:
@@ -732,7 +737,7 @@ def cargar_documentos_elastic():
                     ]
 
                     # Extraer metadatos normativos
-                    meta = pln.extraer_metadatos_norma(texto)
+                    meta = pln.extraer_metadatos_norma(texto, nombre_archivo=archivo.get('nombre', ''))
 
                     #print("fecha encontrada (raw):", meta.get("fecha_documento"))
                     fecha_normalizada = pln.normalizar_fecha(meta.get("fecha_documento"))
@@ -951,7 +956,7 @@ def indexar_carpeta_local():
             # ── Extracción de texto
             yield evento('progreso', archivo=nombre, num=i, total=total, fase='Extrayendo texto')
             texto = Funciones.extraer_texto_pdf(ruta_pdf)
-            if not texto or len(texto.strip()) < 50:
+            if not texto or not Funciones._calidad_texto(texto):
                 yield evento('progreso', archivo=nombre, num=i, total=total, fase='Intentando OCR')
                 try:
                     texto = Funciones.extraer_texto_pdf_ocr(ruta_pdf)
@@ -969,7 +974,7 @@ def indexar_carpeta_local():
                          fase=f'Procesando con PLN ({n_segmentos} segmento(s) ~{n_segmentos * 30}–{n_segmentos * 60}s)')
             try:
                 resultado_pln = pln.procesar_texto_largo(texto)
-                meta          = pln.extraer_metadatos_norma(texto)
+                meta          = pln.extraer_metadatos_norma(texto, nombre_archivo=nombre)
                 fecha_norm    = pln.normalizar_fecha(meta.get('fecha_documento'))
                 temas_conv    = [{'palabra': p, 'relevancia': float(r)}
                                  for p, r in resultado_pln.get('temas', [])]
@@ -1031,57 +1036,6 @@ def admin():
                            version=VERSION_APP, creador=CREATOR_APP)
 
 
-
-@app.route('/consultar-rag', methods=['POST'])
-def consultar_rag():
-    """API de consulta RAG — recupera docs de Elastic y genera respuesta con citación (S14)."""
-    try:
-        data = request.get_json()
-        consulta = data.get('consulta', '').strip()
-        if not consulta:
-            return jsonify({'success': False, 'error': 'Consulta vacía'}), 400
-
-        # 1. Recuperar candidatos desde Elasticsearch
-        query_elastic = {
-            "query": {
-                "multi_match": {
-                    "query": consulta,
-                    "fields": ["titulo_norma^3", "resumen^2", "texto", "temas.palabra^2"],
-                    "type": "best_fields"
-                }
-            }
-        }
-        resultado_elastic = elastic.buscar(
-            index=ELASTIC_INDEX_DEFAULT, query=query_elastic, size=20
-        )
-
-        hits = resultado_elastic.get('hits', {}).get('hits', [])
-        if not hits:
-            return jsonify({'success': True, 'respuesta': 'No se encontraron documentos relevantes.', 'fuentes': []})
-
-        # 2. Preparar corpus para RAG (usa resumen si existe, si no los primeros 3000 chars del texto)
-        documentos_rag = [
-            {
-                'id': hit['_id'],
-                'texto': hit['_source'].get('resumen') or hit['_source'].get('texto', '')[:3000],
-                'fuente': hit['_source'].get('nombre_archivo', hit['_id'])
-            }
-            for hit in hits
-            if hit['_source'].get('resumen') or hit['_source'].get('texto')
-        ]
-
-        if not documentos_rag:
-            return jsonify({'success': True, 'respuesta': 'Sin texto disponible.', 'fuentes': []})
-
-        # 3. Indexar y responder con RAG
-        rag = RAG(n_vecinos=min(6, len(documentos_rag)))
-        rag.indexar(documentos_rag)
-        resultado = rag.responder(consulta, n_docs=3, n_oraciones=3)
-
-        return jsonify({'success': True, **resultado})
-
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 # ==================== MAIN ====================

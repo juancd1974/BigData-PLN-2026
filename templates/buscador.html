@@ -8,7 +8,6 @@
     <link href="{{ url_for('static', filename='css/landingPage.css') }}" rel="stylesheet">
     <style>
         .card-resultado    { border-left: 4px solid #0d6efd; margin-bottom: 0.75rem; }
-        .rag-answer        { background: #f0f7ff; border-left: 4px solid #0d6efd; padding: 1.25rem; border-radius: 0.375rem; }
         .filtro-scroll     { max-height: 150px; overflow-y: auto; }
         .filtro-grupo      { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #dee2e6; }
         .filtro-grupo:last-child { border-bottom: none; }
@@ -41,41 +40,16 @@
         <div class="container-fluid mt-4 px-4">
             <h2 class="mb-3">Buscador de Normatividad</h2>
 
-            <!-- Tabs de modo -->
-            <ul class="nav nav-tabs mb-0" id="tabsModo">
-                <li class="nav-item">
-                    <button class="nav-link active" id="tabElastic" onclick="setModo('elastic')">
-                        Búsqueda por palabras clave
-                    </button>
-                </li>
-                <li class="nav-item">
-                    <button class="nav-link" id="tabRAG" onclick="setModo('rag')">
-                        Consultar con RAG
-                    </button>
-                </li>
-            </ul>
-
-            <!-- Input card -->
-            <div class="card border-top-0 rounded-top-0 mb-3">
+            <!-- Formulario de búsqueda -->
+            <div class="card mb-3">
                 <div class="card-body">
-                    <div id="inputElastic">
-                        <form onsubmit="buscar(event)">
-                            <div class="input-group input-group-lg">
-                                <input type="text" class="form-control" id="textoBuscar"
-                                       placeholder="Buscar por tema, tipo de norma o entidad...">
-                                <button class="btn btn-primary" type="submit">Buscar</button>
-                            </div>
-                        </form>
-                    </div>
-                    <div id="inputRAG" style="display:none">
-                        <form onsubmit="consultarRAG(event)">
-                            <div class="input-group input-group-lg">
-                                <input type="text" class="form-control" id="textoRAG"
-                                       placeholder="Escribe tu pregunta sobre la normatividad...">
-                                <button class="btn btn-primary boton_buscar" type="submit">Consultar</button>
-                            </div>
-                        </form>
-                    </div>
+                    <form onsubmit="buscar(event)">
+                        <div class="input-group input-group-lg">
+                            <input type="text" class="form-control" id="textoBuscar"
+                                   placeholder="Buscar por tema, tipo de norma o entidad...">
+                            <button class="btn btn-primary" type="submit">Buscar</button>
+                        </div>
+                    </form>
                 </div>
             </div>
 
@@ -116,18 +90,6 @@
                     </div>
                 </div>
             </div>
-
-            <!-- Resultados RAG -->
-            <div id="divResultadosRAG" style="display:none">
-                <div class="card">
-                    <div class="card-header"><strong>Respuesta</strong></div>
-                    <div class="card-body">
-                        <div class="rag-answer mb-3" id="ragRespuesta"></div>
-                        <h6 class="text-muted">Fuentes consultadas</h6>
-                        <div id="ragFuentes"></div>
-                    </div>
-                </div>
-            </div>
         </div>
     </main>
 
@@ -160,17 +122,6 @@
         let ultimaBusqueda  = [];
         let paginaActual    = 1;
         const TAMANO_PAGINA = 10;
-
-        // ── Cambio de modo (tabs) ────────────────────────────────────────────────────
-        function setModo(modo) {
-            document.getElementById('inputElastic').style.display       = modo === 'elastic' ? 'block' : 'none';
-            document.getElementById('inputRAG').style.display           = modo === 'rag'     ? 'block' : 'none';
-            document.getElementById('tabElastic').classList.toggle('active', modo === 'elastic');
-            document.getElementById('tabRAG').classList.toggle('active',     modo === 'rag');
-            document.getElementById('divResultadosElastic').style.display = 'none';
-            document.getElementById('divResultadosRAG').style.display     = 'none';
-            document.getElementById('divError').style.display             = 'none';
-        }
 
         // ── Búsqueda Elasticsearch ───────────────────────────────────────────────────
         function buscar(event) {
@@ -209,7 +160,6 @@
             mostrarTarjetas(data.resultados || []);
             actualizarPaginacion(data.total || 0);
             document.getElementById('divResultadosElastic').style.display = 'block';
-            document.getElementById('divResultadosRAG').style.display     = 'none';
         }
 
         function mostrarTarjetas(hits) {
@@ -348,44 +298,6 @@
                 ${entHtml   ? `<h6>Entidades detectadas</h6><dl class="row">${entHtml}</dl>` : ''}
                 ${temasHtml ? `<h6>Temas PLN</h6><p>${temasHtml}</p>` : ''}
             `;
-        }
-
-        // ── Consulta RAG ─────────────────────────────────────────────────────────────
-        function consultarRAG(event) {
-            event.preventDefault();
-            const consulta = document.getElementById('textoRAG').value.trim();
-            if (!consulta) return;
-
-            mostrarCargando('Consultando documentos con RAG...');
-            document.getElementById('divResultadosRAG').style.display     = 'none';
-            document.getElementById('divResultadosElastic').style.display = 'none';
-
-            fetch('/consultar-rag', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ consulta })
-            })
-            .then(r => r.json())
-            .then(data => {
-                ocultarCargando();
-                if (data.success) mostrarResultadosRAG(data);
-                else mostrarError(data.error || 'Error en consulta RAG');
-            })
-            .catch(() => { ocultarCargando(); mostrarError('Error de conexión'); });
-        }
-
-        function mostrarResultadosRAG(data) {
-            document.getElementById('ragRespuesta').textContent = data.respuesta || 'Sin respuesta.';
-
-            const fuentes = (data.fuentes || []).map(f => `
-                <div class="d-flex align-items-center mb-2">
-                    <span class="me-2">📄</span>
-                    <span class="flex-grow-1 small">${f.fuente}</span>
-                    <span class="badge bg-primary bg-opacity-75">${(f.similitud * 100).toFixed(0)}% similitud</span>
-                </div>`).join('');
-
-            document.getElementById('ragFuentes').innerHTML = fuentes || '<p class="text-muted small">Sin fuentes.</p>';
-            document.getElementById('divResultadosRAG').style.display = 'block';
         }
 
         // ── Helpers UI ───────────────────────────────────────────────────────────────

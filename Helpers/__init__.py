@@ -1,8 +1,7 @@
-from .mongoDB import MongoDB
-from .funciones import Funciones
-from .elastic import ElasticSearch
-#from .webScraping import WebScraping
-from .webScrapingMinAgricultura import WebScrapingMinAgricultura
-from .PLN import PLN
-from .RAG import RAG
-__all__ = ['MongoDB', 'Funciones', 'ElasticSearch', 'WebScraping', 'PLN', 'WebScrapingMinAgricultura', 'RAG']
+from .PLN.PLN import PLN
+from .Utils.funciones import Funciones
+from .BasesDatos.elastic import ElasticSearch
+from .BasesDatos.mongoDB import MongoDB
+from .Ingesta.webScrapingMinAgricultura import WebScrapingMinAgricultura
+
+__all__ = ['PLN', 'Funciones', 'ElasticSearch', 'MongoDB', 'WebScrapingMinAgricultura']

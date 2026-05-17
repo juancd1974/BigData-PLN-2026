@@ -5,7 +5,7 @@ from urllib.parse import urljoin, urlparse
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 from typing import List, Dict, Optional
 import requests
-from Helpers import Funciones
+from Helpers.Utils.funciones import Funciones
 
 class WebScraping:
     """

@@ -3,7 +3,8 @@ import re
 import zipfile
 import requests
 import json
-import PyPDF2
+import fitz
+from collections import Counter
 from PIL import Image
 import pytesseract
 from typing import Dict, List
@@ -125,23 +126,33 @@ class Funciones:
             return False
     
     @staticmethod
+    def _calidad_texto(texto: str) -> bool:
+        """True si el texto extraído no parece caracteres corruptos de fuente mal decodificada."""
+        palabras = texto.lower().split()
+        if len(palabras) < 20:
+            return False
+        freq = Counter(palabras)
+        top_count = freq.most_common(1)[0][1]
+        if top_count / len(palabras) > 0.30:
+            return False
+        if len(freq) < min(30, len(palabras) // 3):
+            return False
+        return True
+
+    @staticmethod
     def extraer_texto_pdf(ruta_pdf: str) -> str:
-        """
-        Extrae texto de un archivo PDF
-        
-        Args:
-            ruta_pdf: Ruta del archivo PDF
-            
-        Returns:
-            Texto extraído del PDF
-        """
+        """Extrae texto con PyMuPDF. Retorna '' si la calidad es baja (fuente mal decodificada),
+        para que el llamador active el OCR fallback."""
         try:
-            texto = ""
-            with open(ruta_pdf, 'rb') as file:
-                pdf_reader = PyPDF2.PdfReader(file)
-                for page in pdf_reader.pages:
-                    texto += page.extract_text() + "\n"
-            return texto.strip()
+            paginas = []
+            with fitz.open(ruta_pdf) as doc:
+                for page in doc:
+                    paginas.append(page.get_text())
+            texto = "\n".join(paginas).strip()
+            if Funciones._calidad_texto(texto):
+                return texto
+            print(f"  → PyMuPDF: calidad baja en {os.path.basename(ruta_pdf)}, se intentará OCR")
+            return ""
         except Exception as e:
             print(f"Error al extraer texto del PDF {ruta_pdf}: {e}")
             return ""

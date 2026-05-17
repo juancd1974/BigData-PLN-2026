@@ -18,7 +18,7 @@ lxml
 playwright
 
 # Procesamiento PDF / OCR
-PyPDF2
+PyMuPDF          # reemplaza PyPDF2; mejor soporte de fuentes embebidas
 pytesseract           # Requiere Poppler instalado para OCR (vea INSTALLATION_GUIDE.md sección 3.6)
 pdf2image            # Requiere Poppler instalado para OCR (vea INSTALLATION_GUIDE.md sección 3.6)
 Pillow
@@ -30,11 +30,11 @@ nltk
 scikit-learn>=1,<2
 spacy>=3,<4
 dateparser>=1.1
+gensim>=4,<5           # MANDATORIO en producción (Python<=3.12). En Python 3.14 activa fallback spaCy GloVe.
 
 # Embeddings y Modelos de Lenguaje
 torch>=2,<3
 transformers>=4,<5
-sentence-transformers>=2.7,<4
 huggingface-hub>=0.14.1,<1
 protobuf>=3.20          # requerido por sentencepiece (tokenizador de mT5/mBART)
 sentencepiece>=0.1.99   # tokenizador para modelos mT5 de Google
