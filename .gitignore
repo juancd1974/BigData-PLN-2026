@@ -98,3 +98,22 @@ static/uploads/*
 !static/uploads/.gitkeep
 static/docs/*
 !static/docs/.gitkeep
+
+# =============================================================
+# Herramientas de IA para desarrollo (VS Code y otras)
+# =============================================================
+# Claude Code
+.claude/
+
+# GitHub Copilot
+.copilot/
+
+# Cursor
+.cursor/
+.cursorignore
+
+# Continue
+.continue/
+
+# Codeium
+.codeium/
