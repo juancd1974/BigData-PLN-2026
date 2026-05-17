@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(cd \"C:\\\\Users\\\\Juan Carlos\\\\Documents\\\\GitHub\\\\BigData-PLN-2026\"; Get-ChildItem -Path . -Recurse -Depth 4 | Where-Object { $_.Name -eq \"activate.ps1\" } | Select-Object FullName)",
-      "PowerShell(cd \"C:\\\\Users\\\\Juan Carlos\\\\Documents\\\\GitHub\\\\BigData-PLN-2026\"; $env:GENSIM_NO_CYTHON = \"1\"; python -m pip install \"gensim>=4,<5\" 2>&1 | Select-Object -Last 10)",
-      "PowerShell(cd \"C:\\\\Users\\\\Juan Carlos\\\\Documents\\\\GitHub\\\\BigData-PLN-2026\"; foreach \\($f in @\\('Helpers/text_preprocessing.py','Helpers/entity_extractor.py','Helpers/vector_search.py','Helpers/summarizer.py','Helpers/PLN.py'\\)\\) { $r = python -c \"import ast; ast.parse\\(open\\('$f', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\" 2>&1; \"$f`: $r\" })"
-    ]
-  }
-}
