@@ -1,15 +1,15 @@
 {
-    "nombre_archivo": "up_LEY_1335_DE_2009.pdf",
+    "nombre_archivo": "LEY_1335_DE_2009.pdf",
     "hash_archivo": "sha256:184d1610d59aab1d81ee2743ca36518603c697305ff12def56ba7ed195a3ee12",
-    "fecha_procesamiento": "2026-05-25T23:59:58.373980",
+    "fecha_procesamiento": "2026-05-26T09:34:30.898137",
     "extraccion_texto": {
         "metodo": "pymupdf",
-        "tiempo_segundos": 0.033,
+        "tiempo_segundos": 0.07,
         "longitud_caracteres": 27153,
         "calidad_ok": true
     },
     "ner": {
-        "tiempo_ner_segundos": 1.081,
+        "tiempo_ner_segundos": 2.502,
         "entidades_por_categoria": {
             "personas": 7,
             "lugares": 26,
@@ -33,10 +33,10 @@
     },
     "resumen": {
         "modelo": "google/mt5-small",
-        "tiempo_segundos": 31.845,
-        "num_chunks": 10,
-        "longitud_resumen": 697,
+        "tiempo_segundos": 50.528,
+        "num_chunks": 7,
+        "longitud_resumen": 1057,
         "longitud_texto": 27153,
-        "perplexidad": 7.8249
+        "perplexidad": 4.5234
     }
 }

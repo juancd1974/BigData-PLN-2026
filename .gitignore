@@ -98,6 +98,10 @@ static/uploads/*
 !static/uploads/.gitkeep
 static/docs/*
 !static/docs/.gitkeep
+static/metrics/*
+!static/metrics/.gitkeep
+static/temp/*
+!static/temp/.gitkeep
 
 # =============================================================
 # Herramientas de IA para desarrollo (VS Code y otras)

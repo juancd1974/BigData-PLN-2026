@@ -54,7 +54,8 @@ def cargar_pipeline_resumen(modelo_nombre: str = _MODELO_RESUMEN):
     print(f"  Cargando modelo de resumen '{modelo_nombre}'...")
     try:
         tokenizer = AutoTokenizer.from_pretrained(modelo_nombre, use_fast=False, legacy=True)
-        pipe = pipeline("summarization", model=modelo_nombre, tokenizer=tokenizer, device=device)
+        pipe = pipeline("summarization", model=modelo_nombre, tokenizer=tokenizer, device=device,
+                        max_new_tokens=None)
         print(f"  ✓ '{modelo_nombre}' cargado")
         return pipe
     except Exception as exc:
@@ -63,19 +64,26 @@ def cargar_pipeline_resumen(modelo_nombre: str = _MODELO_RESUMEN):
 
 
 def _resumir_fragmento(pipeline_resumen, fragmento: str,
-                        max_new_tokens: int, min_length: int) -> str:
+                        max_length: int, min_length: int) -> str:
     """
     Aplica el pipeline de resumen a un único fragmento.
 
     mT5 requiere el prefijo "summarize: " (modelo text-to-text, familia T5).
-    Se usa max_new_tokens en lugar de max_length para evitar el conflicto
-    de parámetros que genera advertencia en HuggingFace.
+    Se usa max_length (no max_new_tokens): el pipeline de summarization reenvía
+    max_length a model.generate() en todas las versiones de HuggingFace;
+    max_new_tokens no siempre se forwarda, lo que hace que generate() use su
+    default max_length=20 y provoca "min_length must be inferior than max_length"
+    cuando min_length > 20.
+
+    min_length se ajusta dinámicamente: no puede superar el 50% de los
+    tokens estimados del fragmento ni max_length - 1, para evitar el
+    error "min_length must be inferior than max_length" en fragmentos cortos.
 
     Args:
         pipeline_resumen: Pipeline cargado.
         fragmento:        Texto limpio (nivel 1) a resumir.
-        max_new_tokens:   Máximo de tokens a generar.
-        min_length:       Mínimo de tokens generados.
+        max_length:       Máximo de tokens a generar.
+        min_length:       Mínimo de tokens generados (se ajusta si es necesario).
 
     Returns:
         String con el resumen generado.
@@ -83,10 +91,17 @@ def _resumir_fragmento(pipeline_resumen, fragmento: str,
     modelo_id = pipeline_resumen.model.config.name_or_path.lower()
     entrada = f"summarize: {fragmento}" if 't5' in modelo_id else fragmento
 
+    # Estimar tokens del fragmento (aproximación: 1 token ≈ 4 chars)
+    tokens_estimados = len(fragmento) // 4
+    # min_length no puede superar el 50% de los tokens de entrada ni max_length - 1
+    min_length_seguro = min(min_length,
+                            max(1, tokens_estimados // 2),
+                            max_length - 1)
+
     resultado = pipeline_resumen(
         entrada,
-        max_new_tokens=max_new_tokens,
-        min_length=min_length,
+        max_length=max_length,
+        min_length=min_length_seguro,
         do_sample=False,   # decodificación greedy: determinista y más rápida
         truncation=True,
     )
@@ -95,9 +110,9 @@ def _resumir_fragmento(pipeline_resumen, fragmento: str,
 
 def generar_resumen_abstractivo(pipeline_resumen,
                                  texto: str,
-                                 max_length: int = 150,
-                                 min_length: int = 10,
-                                 chunk_chars: int = 3000) -> str:
+                                 max_length: int = 300,
+                                 min_length: int = 30,
+                                 chunk_chars: int = 4000) -> str:
     """
     Genera un resumen abstractivo usando estrategia map-reduce.
 
@@ -206,9 +221,9 @@ def calcular_perplexidad(pipeline_resumen, texto: str) -> float:
 
 def generar_resumen_con_metricas(pipeline_resumen,
                                   texto: str,
-                                  max_length: int = 150,
-                                  min_length: int = 10,
-                                  chunk_chars: int = 3000) -> Tuple[str, Dict]:
+                                  max_length: int = 300,
+                                  min_length: int = 30,
+                                  chunk_chars: int = 4000) -> Tuple[str, Dict]:
     """
     Wrapper de generar_resumen_abstractivo() que agrega métricas de ejecución.
 

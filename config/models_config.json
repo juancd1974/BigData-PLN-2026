@@ -7,9 +7,9 @@
       "tipo": "transformers",
       "modelo_hf": "google/mt5-small",
       "activo": true,
-      "max_length": 150,
-      "min_length": 10,
-      "chunk_chars": 3000
+      "max_length": 300,
+      "min_length": 30,
+      "chunk_chars": 4000
     },
     {
       "id": "mt5_base",
@@ -18,12 +18,26 @@
       "tipo": "transformers",
       "modelo_hf": "google/mt5-base",
       "activo": false,
-      "max_length": 150,
-      "min_length": 10,
-      "chunk_chars": 3000
+      "max_length": 300,
+      "min_length": 30,
+      "chunk_chars": 4000
+    },
+    {
+      "id": "mt5_base_spanish",
+      "nombre": "mT5-base Spanish (DACSA)",
+      "descripcion": "mT5-base fine-tuned para resumen abstractivo en español sobre 1.8M pares de artículos en español. Mejor calidad que mT5 sin ajuste.",
+      "tipo": "transformers",
+      "modelo_hf": "ELiRF/mt5-base-dacsa-es",
+      "activo": true,
+      "max_length": 300,
+      "min_length": 30,
+      "chunk_chars": 4000
     }
   ],
   "configuracion_activa": {
-    "summarizer_activo": "mt5_small"
+    "summarizer_activo": "mt5_small",
+    "modo_comparacion": true,
+    "modelo_fase1": "mt5_small",
+    "modelo_fase2": "mt5_base_spanish"
   }
 }

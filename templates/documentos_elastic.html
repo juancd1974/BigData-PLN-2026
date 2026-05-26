@@ -23,6 +23,19 @@
         .log-omitido { color: #a0a0a0; }
         .log-progreso{ color: #79c0ff; }
         .log-fin     { color: #ffd700; font-weight: bold; }
+        .log-titulo  { color: #79c0ff; font-weight: bold; }
+        .log-warning { color: #f0ad4e; }
+        .log-info    { color: #d4d4d4; }
+        #log_fase2 {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Courier New', monospace;
+            font-size: 0.82rem;
+            padding: 1rem;
+            border-radius: 0.375rem;
+            height: 300px;
+            overflow-y: auto;
+        }
     </style>
 </head>
 <body>
@@ -159,7 +172,7 @@
                                 <label class="form-check-label" for="seleccionar_todos">Seleccionar todos</label>
                             </div>
                             <button type="button" class="btn btn-success" id="btn_cargar" onclick="iniciarProcesamiento()">
-                                <i class="bi bi-cloud-upload"></i> <span id="texto_btn_cargar">Cargar seleccionados</span>
+                                <i class="bi bi-cpu"></i> <span id="texto_btn_cargar">Cargar seleccionados</span>
                             </button>
                         </div>
 
@@ -266,7 +279,7 @@
                   <div class="d-flex justify-content-end mt-3">
                     <button class="btn btn-success boton_buscar"
                             onclick="indexarSeleccionados()">
-                      Indexar seleccionados en Elasticsearch
+                      <i class="bi bi-cloud-upload me-1"></i>Indexar seleccionados en Elasticsearch
                     </button>
                   </div>
                 </div>
@@ -395,7 +408,7 @@
             document.getElementById('nombre_carpeta').value = `${folderName} (${files.length} PDFs)`;
             archivosActuales = files.map(f => ({ nombre: f.name, extension: 'pdf', tamaño: f.size, file: f }));
             mostrarTablaArchivos({ archivos: archivosActuales, mensaje: `${files.length} archivos PDF encontrados` });
-            document.getElementById('texto_btn_cargar').textContent = 'PLN + Indexar seleccionados';
+            document.getElementById('texto_btn_cargar').textContent = 'Procesar PLN';
         }
 
         async function indexarCarpetaLocal(archivosSeleccionados) {
@@ -555,6 +568,15 @@
             log.scrollTop = log.scrollHeight;
         }
 
+        function logFase2(mensaje, clase) {
+            const log = document.getElementById('log_fase2');
+            const div = document.createElement('div');
+            div.className = clase || 'log-info';
+            div.textContent = mensaje;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+        }
+
         // ── Helpers spinner ──────────────────────────────────────────────────────────
         function mostrarCargando(msg) {
             document.getElementById('mensaje_cargando').textContent = msg;
@@ -612,41 +634,78 @@
         }
 
         async function procesarFase1(archivos) {
+          // Limpiar alertas anteriores al iniciar nuevo procesamiento
+          document.querySelectorAll('.alerta-sin-nuevos').forEach(el => el.remove());
+
           const index = document.getElementById('select_index').value;
           document.getElementById('seccion_fase1').style.display = 'none';
           document.getElementById('seccion_progreso').style.display = 'block';
           document.getElementById('log_progreso').innerHTML = '';
-          logLinea('Iniciando procesamiento con mT5-small...', 'log-progreso');
+          logLinea('Iniciando procesamiento con mT5-small...', 'log-info');
 
-          const payload = {
-            archivos: archivos.map(a => ({
+          const params = new URLSearchParams({
+            archivos: JSON.stringify(archivos.map(a => ({
               ruta: a.ruta,
               nombre: a.nombre,
               hash_archivo: a.hash_archivo || ''
-            })),
+            }))),
             index: index
-          };
+          });
 
-          try {
-            logLinea('Procesando documentos (esto puede tardar)...', 'log-progreso');
-            const resp = await fetch('/procesar-fase1', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify(payload)
-            });
-            const data = await resp.json();
+          return new Promise((resolve) => {
+            const es = new EventSource('/procesar-fase1?' + params.toString());
 
-            if (!data.success) {
-              logLinea('Error: ' + (data.error || 'Error desconocido'), 'log-error');
-              return;
-            }
+            es.onmessage = function(event) {
+              const data = JSON.parse(event.data);
 
-            resultadosFase1 = data.resultados;
-            mostrarResultadosFase1(data.resultados, data.estimacion_fase2);
+              if (data.tipo === 'fin') {
+                es.close();
+                const resultado = JSON.parse(data.mensaje);
+                if (resultado.resultados.length === 0) {
+                  document.getElementById('seccion_progreso').style.display = 'none';
 
-          } catch(e) {
-            logLinea('Error de conexión: ' + e.message, 'log-error');
-          }
+                  // Limpiar alertas anteriores del mismo tipo
+                  document.querySelectorAll('.alerta-sin-nuevos')
+                    .forEach(el => el.remove());
+
+                  const alerta = document.createElement('div');
+                  alerta.className = 'alert alert-info mt-3 alerta-sin-nuevos';
+                  alerta.innerHTML = `
+                    <strong>Sin archivos nuevos</strong><br>
+                    ${resultado.mensaje || 'Todos los archivos seleccionados ya están indexados.'}
+                    ${resultado.omitidos && resultado.omitidos.length > 0
+                      ? '<br><small>Archivos omitidos: ' +
+                        resultado.omitidos.join(', ') + '</small>'
+                      : ''}
+                  `;
+                  document.getElementById('seccion_resultados').appendChild(alerta);
+                } else {
+                  resultadosFase1 = resultado.resultados;
+                  mostrarResultadosFase1(resultado.resultados,
+                                          resultado.estimacion_fase2);
+                }
+                resolve(resultado);
+                return;
+              }
+
+              // Mapear tipo a clase CSS del log
+              const clase = {
+                'archivo': 'log-titulo',
+                'ok':      'log-ok',
+                'error':   'log-error',
+                'omitido': 'log-warning',
+                'info':    'log-info',
+              }[data.tipo] || 'log-info';
+
+              logLinea(data.mensaje, clase);
+            };
+
+            es.onerror = function() {
+              es.close();
+              logLinea('Error de conexión con el servidor.', 'log-error');
+              resolve({success: false});
+            };
+          });
         }
 
         function mostrarResultadosFase1(resultados, estimacion) {
@@ -676,33 +735,50 @@
           document.getElementById('seccion_progreso_fase2').style.display = 'block';
 
           const log = document.getElementById('log_fase2');
-          log.innerHTML = '<p class="text-info">Procesando con mT5-base...</p>';
+          log.innerHTML = '';
 
           const archivos = resultadosFase1.map(r => ({
             nombre: r.nombre,
-            hash_archivo: r.hash_archivo
+            hash_archivo: r.hash_archivo,
+            completitud_metadatos: r.completitud_metadatos_detalle || {}
           }));
 
-          try {
-            const resp = await fetch('/procesar-fase2', {
-              method: 'POST',
-              headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({archivos})
-            });
-            const data = await resp.json();
+          const params = new URLSearchParams({
+            archivos: JSON.stringify(archivos)
+          });
 
-            if (!data.success) {
-              log.innerHTML += `<p class="text-danger">Error: ${data.error}</p>`;
-              return;
-            }
+          return new Promise((resolve) => {
+            const es = new EventSource('/procesar-fase2?' + params.toString());
 
-            resultadosFase2 = data.resultados;
-            log.innerHTML += '<p class="text-success">✓ Procesamiento completado</p>';
-            setTimeout(() => mostrarComparacion(), 1000);
+            es.onmessage = function(event) {
+              const data = JSON.parse(event.data);
 
-          } catch(e) {
-            log.innerHTML += `<p class="text-danger">Error: ${e.message}</p>`;
-          }
+              if (data.tipo === 'fin') {
+                es.close();
+                const resultado = JSON.parse(data.mensaje);
+                resultadosFase2 = resultado.resultados || [];
+                logFase2('✓ Completado', 'log-ok');
+                setTimeout(() => mostrarComparacion(), 1000);
+                resolve(resultado);
+                return;
+              }
+
+              const clase = {
+                'archivo': 'log-titulo',
+                'ok':      'log-ok',
+                'error':   'log-error',
+                'info':    'log-info',
+              }[data.tipo] || 'log-info';
+
+              logFase2(data.mensaje, clase);
+            };
+
+            es.onerror = function() {
+              es.close();
+              logFase2('Error de conexión.', 'log-error');
+              resolve({success: false});
+            };
+          });
         }
 
         function saltarFase2() {
@@ -830,6 +906,16 @@
                 ✓ ${data.indexados} documento(s) indexado(s) correctamente.
                 ${data.errores ? `${data.errores} error(es).` : ''}
               </div>`;
+              // Limpiar alerta de sin archivos nuevos si quedó visible
+              document.querySelectorAll('.alerta-sin-nuevos').forEach(el => el.remove());
+              // Actualizar estado de archivos procesados a "Indexado"
+              resultadosFase1.forEach((r) => {
+                const idx = archivosActuales.findIndex(
+                  a => a.nombre === r.nombre ||
+                       a.nombre === r.nombre.replace(/_/g, ' ')
+                );
+                if (idx !== -1) actualizarEstadoFila(idx, 'Indexado', 'success');
+              });
             } else {
               msg.innerHTML = `<div class="alert alert-danger">
                 Error al indexar: ${data.error || 'Error desconocido'}

@@ -57,6 +57,42 @@ def obtener_modelo_resumen_activo() -> str:
     return fallback
 
 
+def obtener_modelo_fase(fase: str) -> str:
+    """
+    Retorna el modelo_hf configurado para la fase indicada.
+
+    Lee configuracion_activa.modelo_fase1 o modelo_fase2 según el parámetro
+    y busca el modelo_hf correspondiente en el array summarizer.
+
+    Args:
+        fase: 'fase1' o 'fase2'.
+
+    Returns:
+        Identificador HuggingFace del modelo, o el fallback si no se puede
+        leer la configuración ('google/mt5-small' para fase1,
+        'ELiRF/mt5-base-dacsa-es' para fase2).
+    """
+    fallbacks = {
+        'fase1': 'google/mt5-small',
+        'fase2': 'ELiRF/mt5-base-dacsa-es',
+    }
+    fallback = fallbacks.get(fase, 'google/mt5-small')
+    config = cargar_config_modelos()
+    if not config:
+        return fallback
+
+    campo = 'modelo_fase1' if fase == 'fase1' else 'modelo_fase2'
+    modelo_id = config.get('configuracion_activa', {}).get(campo)
+    if not modelo_id:
+        return fallback
+
+    for modelo in config.get('summarizer', []):
+        if modelo.get('id') == modelo_id:
+            return modelo.get('modelo_hf', fallback)
+
+    return fallback
+
+
 def liberar_modelo_resumen(pln) -> None:
     """
     Libera la memoria del modelo de resumen cargado en el objeto PLN.
@@ -76,7 +112,8 @@ def liberar_modelo_resumen(pln) -> None:
 
 
 def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
-                       pln, modelo_resumen: str) -> Tuple[Optional[Dict], Dict]:
+                       pln, modelo_resumen: str,
+                       callback=None) -> Tuple[Optional[Dict], Dict]:
     """
     Orquesta el pipeline completo para un documento normativo.
 
@@ -91,6 +128,9 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
         hash_archivo:   Hash SHA-256 con prefijo "sha256:".
         pln:            Instancia de PLN con spaCy cargado.
         modelo_resumen: Identificador HuggingFace del modelo de resumen.
+        callback:       Función opcional callback(tipo, mensaje) para
+                        recibir mensajes de progreso en tiempo real.
+                        tipo: 'info', 'ok', 'error', 'progreso'.
 
     Returns:
         Tupla (documento_elastic, metricas). documento_elastic es None si
@@ -100,6 +140,7 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
     extension = os.path.splitext(nombre)[1].lower().lstrip('.')
 
     # ── a. Extracción de texto ────────────────────────────────────────────
+    if callback: callback('info', 'Extrayendo texto...')
     texto = ''
     if extension == 'pdf':
         texto, metricas_ext = Funciones.extraer_texto_pdf_con_metricas(ruta)
@@ -126,29 +167,35 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
         longitud=metricas_ext['longitud_caracteres'],
         calidad_ok=metricas_ext['calidad_ok'],
     )
+    if callback: callback('ok', f"Texto extraído ({metricas_ext['metodo']}, {metricas_ext['longitud_caracteres']} chars, {metricas_ext['tiempo_segundos']}s)")
     Funciones.guardar_texto_temporal(hash_archivo, nombre, texto)
 
     if not texto or len(texto.strip()) < 50:
         print(f"  ✗ Texto insuficiente en '{nombre}'. Se omite el documento.")
+        if callback: callback('error', 'Texto insuficiente, documento omitido')
         return None, metricas
 
     # ── b. NER ────────────────────────────────────────────────────────────
+    if callback: callback('info', 'Analizando entidades (NER)...')
     entidades: Dict = {}
     try:
         entidades, metricas_ner = entity_extractor.extraer_entidades_mejorado(
             pln.nlp, texto
         )
         metricas = metrics.registrar_ner(metricas, metricas_ner)
+        if callback: callback('ok', f"NER completado ({metricas_ner.get('tiempo_ner_segundos', 0)}s)")
     except Exception as exc:
         print(f"  ✗ Error en NER para '{nombre}': {exc}")
 
     # ── c. Metadatos ──────────────────────────────────────────────────────
+    if callback: callback('info', 'Extrayendo metadatos...')
     metadatos: Dict = {}
     try:
         metadatos, metricas_meta = entity_extractor.extraer_metadatos_mejorado(
             pln.nlp, texto, nombre_archivo=nombre
         )
         metricas = metrics.registrar_metadatos(metricas, metricas_meta)
+        if callback: callback('ok', f"Metadatos: {metricas_meta.get('campos_completos', 0)}/5 campos ({metricas_meta.get('completitud_porcentaje', 0)}%)")
         if metadatos.get('fecha_documento'):
             fecha_norm = pln.normalizar_fecha(metadatos['fecha_documento'])
             if fecha_norm:
@@ -167,6 +214,7 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
     # ── e. Resumen ────────────────────────────────────────────────────────
     resumen = ''
     try:
+        if callback: callback('info', f'Resumiendo con {modelo_resumen}...')
         if not pln._pipeline_resumen:
             pln.cargar_resumen(modelo_resumen)
         elif pln._pipeline_resumen.model.config.name_or_path != modelo_resumen:
@@ -177,6 +225,7 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
             pln._pipeline_resumen, texto
         )
         metricas = metrics.registrar_resumen(metricas, metricas_resumen)
+        if callback: callback('ok', f"Resumen generado ({metricas_resumen.get('num_chunks', 0)} segmentos, {metricas_resumen.get('tiempo_segundos', 0)}s, perpl: {metricas_resumen.get('perplexidad')})")
     except Exception as exc:
         print(f"  ✗ Error en resumen para '{nombre}': {exc}")
 
@@ -241,48 +290,57 @@ def filtrar_archivos_nuevos(archivos: List[Dict],
 
 
 def procesar_fase1(ruta: str, nombre: str,
-                   hash_archivo: str, pln) -> Tuple[Optional[Dict], Dict]:
+                   hash_archivo: str, pln,
+                   callback=None) -> Tuple[Optional[Dict], Dict]:
     """
     Fase 1 del pipeline: extracción de texto, NER, metadatos, temas
-    y resumen con mT5-small.
+    y resumen con el modelo configurado en fase 1.
 
-    Alias semántico de procesar_documento() con modelo fijo 'google/mt5-small'.
-    Permite claridad en flujos que distinguen fase 1 (mT5-small) de
-    fase 2 (mT5-base).
+    Alias semántico de procesar_documento(). El modelo de resumen se
+    lee de config/models_config.json (configuracion_activa.modelo_fase1).
 
     Args:
         ruta:         Ruta absoluta o relativa al archivo.
         nombre:       Nombre del archivo (con extensión).
         hash_archivo: Hash SHA-256 con prefijo "sha256:".
         pln:          Instancia de PLN con spaCy cargado.
+        callback:     Función opcional callback(tipo, mensaje) para
+                      recibir mensajes de progreso en tiempo real.
 
     Returns:
         Tupla (documento_elastic, metricas) tal como la retorna
         procesar_documento().
     """
     return procesar_documento(ruta, nombre, hash_archivo, pln,
-                              modelo_resumen='google/mt5-small')
+                              modelo_resumen=obtener_modelo_fase('fase1'),
+                              callback=callback)
 
 
 def procesar_fase2(texto: str, nombre: str,
-                   hash_archivo: str, pln) -> Tuple[str, Dict]:
+                   hash_archivo: str, pln,
+                   completitud_metadatos: dict = None,
+                   callback=None) -> Tuple[str, Dict]:
     """
-    Fase 2 del pipeline: resumen abstractivo con mT5-base sobre texto
-    ya extraído en la fase 1.
+    Fase 2 del pipeline: resumen abstractivo con el modelo configurado
+    en fase 2, sobre texto ya extraído en la fase 1.
 
-    Carga mT5-base liberando el modelo anterior si es necesario.
+    Carga el modelo indicado en config/models_config.json
+    (configuracion_activa.modelo_fase2), liberando el anterior si es necesario.
     Registra métricas de resumen y las persiste en static/metrics/.
 
     Args:
-        texto:        Texto completo del documento (obtenido en fase 1).
-        nombre:       Nombre del archivo fuente.
-        hash_archivo: Hash SHA-256 con prefijo "sha256:".
-        pln:          Instancia de PLN con spaCy cargado.
+        texto:                  Texto completo del documento (obtenido en fase 1).
+        nombre:                 Nombre del archivo fuente.
+        hash_archivo:           Hash SHA-256 con prefijo "sha256:".
+        pln:                    Instancia de PLN con spaCy cargado.
+        completitud_metadatos:  Dict de métricas de metadatos de fase 1 (opcional).
+        callback:               Función opcional callback(tipo, mensaje) para
+                                recibir mensajes de progreso en tiempo real.
 
     Returns:
         Tupla (resumen, metricas). Retorna ("", {}) si ocurre un error.
     """
-    modelo_base = 'google/mt5-base'
+    modelo_base = obtener_modelo_fase('fase2')
     try:
         metricas = metrics.inicializar_metricas_documento(nombre, hash_archivo)
 
@@ -291,13 +349,20 @@ def procesar_fase2(texto: str, nombre: str,
             if pln._pipeline_resumen else None
         )
         if pln._pipeline_resumen is None or modelo_actual != modelo_base:
+            if callback: callback('info', 'Cargando mT5-base...')
             liberar_modelo_resumen(pln)
             pln.cargar_resumen(modelo_base)
+            if callback: callback('ok', 'mT5-base listo')
 
+        if callback: callback('info', 'Generando resumen con mT5-base...')
         resumen, metricas_resumen = summarizer.generar_resumen_con_metricas(
             pln._pipeline_resumen, texto
         )
         metricas = metrics.registrar_resumen(metricas, metricas_resumen)
+        if callback: callback('ok', f"Resumen generado ({metricas_resumen.get('tiempo_segundos', 0)}s, perpl: {metricas_resumen.get('perplexidad')})")
+        if completitud_metadatos:
+            metricas = metrics.registrar_metadatos(metricas,
+                                                   completitud_metadatos)
         metrics.guardar_metricas(metricas)
 
         return resumen, metricas

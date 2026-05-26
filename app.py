@@ -741,7 +741,11 @@ def subir_pdfs_carpeta():
     guardados = []
     for archivo in request.files.getlist('archivos'):
         if archivo.filename.lower().endswith('.pdf'):
-            nombre = secure_filename(archivo.filename)
+            # Extraer solo el nombre del archivo sin ruta de carpeta
+            # archivo.filename puede venir como "carpeta/nombre.pdf"
+            # desde el navegador cuando se selecciona desde subcarpeta
+            nombre_base = os.path.basename(archivo.filename.replace('\\', '/'))
+            nombre = secure_filename(nombre_base)
             ruta_completa = os.path.join(carpeta_destino, nombre)
             archivo.save(ruta_completa)
             guardados.append({'nombre': nombre, 'ruta': ruta_completa,
@@ -888,14 +892,19 @@ def configuracion():
 
 @app.route('/configuracion/guardar', methods=['POST'])
 def guardar_configuracion():
-    """API para actualizar el modelo de resumen activo"""
+    """API para actualizar campos de configuracion_activa"""
     data = request.get_json()
-    summarizer_activo = data.get('summarizer_activo')
 
     config = pipeline.cargar_config_modelos()
-    modelo_anterior = config.get('configuracion_activa', {}).get('summarizer_activo')
-    config['configuracion_activa']['summarizer_activo'] = summarizer_activo
+    config_activa = config.setdefault('configuracion_activa', {})
+    modelo_anterior = config_activa.get('summarizer_activo')
 
+    campos_validos = ('summarizer_activo', 'modo_comparacion', 'modelo_fase1', 'modelo_fase2')
+    for campo in campos_validos:
+        if campo in data:
+            config_activa[campo] = data[campo]
+
+    summarizer_activo = config_activa.get('summarizer_activo')
     modelo_hf = next(
         (m.get('modelo_hf', 'google/mt5-small') for m in config.get('summarizer', [])
          if m.get('id') == summarizer_activo),
@@ -926,93 +935,190 @@ def metricas_datos():
     return jsonify(metrics.calcular_resumen_comparativo())
 
 
-@app.route('/procesar-fase1', methods=['POST'])
+@app.route('/procesar-fase1')
 def procesar_fase1():
-    """API que ejecuta la fase 1 del pipeline (extracción + NER + resumen mT5-small)."""
+    """Ejecuta fase 1 del pipeline con progreso SSE."""
     if not session.get('logged_in'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     if not session.get('permisos', {}).get('admin_data_elastic'):
         return jsonify({'success': False, 'error': 'Sin permisos'}), 403
 
-    data     = request.get_json()
-    archivos = data.get('archivos', [])
-    index    = data.get('index', '')
+    archivos_json = request.args.get('archivos', '[]')
+    index         = request.args.get('index', '')
+
+    try:
+        archivos = json.loads(archivos_json)
+    except Exception:
+        archivos = []
 
     if not archivos or not index:
-        return jsonify({'success': False, 'error': 'Archivos e índice son requeridos'}), 400
+        return jsonify({'success': False,
+                       'error': 'Archivos e índice son requeridos'}), 400
 
-    resultados    = []
-    tiempos_fase1 = []
+    def generate():
+        def evento(tipo, mensaje):
+            yield f"data: {json.dumps({'tipo': tipo, 'mensaje': mensaje})}\n\n"
 
-    for archivo in archivos:
-        ruta         = archivo.get('ruta', '')
-        nombre       = archivo.get('nombre', '')
-        hash_archivo = archivo.get('hash_archivo') or \
-                       Funciones.calcular_hash_archivo(ruta)
+        resultados    = []
+        tiempos_fase1 = []
+        omitidos      = []
 
-        doc, metricas_doc = pipeline.procesar_fase1(ruta, nombre, hash_archivo, pln_busqueda)
+        # Deduplicación
+        archivos_nuevos = []
+        for archivo in archivos:
+            ruta         = archivo.get('ruta', '')
+            hash_archivo = archivo.get('hash_archivo') or \
+                           Funciones.calcular_hash_archivo(ruta)
+            if not hash_archivo:
+                continue
+            if elastic.existe_hash(hash_archivo, index):
+                omitidos.append(archivo.get('nombre', ''))
+                yield from evento('omitido',
+                    f"{archivo.get('nombre', '')} → ya indexado, omitido")
+            else:
+                archivo['hash_archivo'] = hash_archivo
+                archivos_nuevos.append(archivo)
 
-        resumen_small     = doc.get('resumen', '')         if doc else ''
-        perplexidad_small = (metricas_doc.get('resumen') or {}).get('perplexidad')
-        tiempo_small      = (metricas_doc.get('resumen') or {}).get('tiempo_segundos')
-        completitud       = (metricas_doc.get('metadatos') or {}).get('completitud_porcentaje')
+        if not archivos_nuevos:
+            yield from evento('fin', json.dumps({
+                'success': True, 'resultados': [],
+                'omitidos': omitidos,
+                'mensaje': f'{len(omitidos)} archivo(s) ya indexados.'
+            }))
+            return
 
-        if tiempo_small is not None:
-            tiempos_fase1.append(tiempo_small)
+        total = len(archivos_nuevos)
+        for i, archivo in enumerate(archivos_nuevos, 1):
+            ruta         = archivo.get('ruta', '')
+            nombre       = archivo.get('nombre', '')
+            hash_archivo = archivo.get('hash_archivo', '')
 
-        resultados.append({
-            'nombre':                nombre,
-            'hash_archivo':          hash_archivo,
-            'resumen_small':         resumen_small,
-            'perplexidad_small':     perplexidad_small,
-            'tiempo_small':          tiempo_small,
-            'completitud_metadatos': completitud,
-            'documento':             doc,
-        })
+            yield from evento('archivo', f'[{i}/{total}] {nombre}')
 
-    tiempo_promedio = (sum(tiempos_fase1) / len(tiempos_fase1)) if tiempos_fase1 else 0
-    estimacion = pipeline.estimar_tiempo_fase2(len(resultados), tiempo_promedio)
+            doc, metricas_doc = pipeline.procesar_fase1(
+                ruta, nombre, hash_archivo, pln_busqueda
+            )
 
-    return jsonify({'success': True, 'resultados': resultados, 'estimacion_fase2': estimacion})
+            ext               = metricas_doc.get('extraccion_texto') or {}
+            meta              = metricas_doc.get('metadatos') or {}
+            res               = metricas_doc.get('resumen') or {}
+            ext_metodo        = ext.get('metodo', '?')
+            ext_longitud      = ext.get('longitud_caracteres', 0)
+            num_chunks        = res.get('num_chunks', 0)
+            completitud       = meta.get('completitud_porcentaje')
+            tiempo_small      = res.get('tiempo_segundos')
+            perplexidad_small = res.get('perplexidad')
+            resumen_small     = doc.get('resumen', '') if doc else ''
+
+            yield from evento('ok', f'  → Texto: {ext_metodo} ({ext_longitud} chars)')
+            yield from evento('ok', f'  → Metadatos: {completitud}%')
+            yield from evento('ok',
+                f'  → Resumen: {num_chunks} segmentos, '
+                f'{tiempo_small}s, perpl: {perplexidad_small}')
+
+            if tiempo_small is not None:
+                tiempos_fase1.append(tiempo_small)
+
+            resultados.append({
+                'nombre':                        nombre,
+                'hash_archivo':                  hash_archivo,
+                'resumen_small':                 resumen_small,
+                'perplexidad_small':             perplexidad_small,
+                'tiempo_small':                  tiempo_small,
+                'completitud_metadatos':         completitud,
+                'completitud_metadatos_detalle': meta,
+                'documento':                     doc,
+            })
+
+        tiempo_promedio = (sum(tiempos_fase1) / len(tiempos_fase1)) \
+                          if tiempos_fase1 else 0
+        estimacion = pipeline.estimar_tiempo_fase2(
+            len(resultados), tiempo_promedio
+        )
+
+        yield from evento('fin', json.dumps({
+            'success':          True,
+            'resultados':       resultados,
+            'estimacion_fase2': estimacion,
+            'omitidos':         omitidos,
+        }))
+
+    return Response(generate(),
+                    mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache',
+                             'X-Accel-Buffering': 'no'})
 
 
-@app.route('/procesar-fase2', methods=['POST'])
+@app.route('/procesar-fase2')
 def procesar_fase2():
-    """API que ejecuta la fase 2 del pipeline (resumen con mT5-base)."""
+    """Ejecuta fase 2 del pipeline (mT5-base) con progreso SSE."""
     if not session.get('logged_in'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     if not session.get('permisos', {}).get('admin_data_elastic'):
         return jsonify({'success': False, 'error': 'Sin permisos'}), 403
 
-    data     = request.get_json()
-    archivos = data.get('archivos', [])
+    archivos_json = request.args.get('archivos', '[]')
+    try:
+        archivos = json.loads(archivos_json)
+    except Exception:
+        archivos = []
 
-    if not archivos:
-        return jsonify({'success': False, 'error': 'Archivos son requeridos'}), 400
+    def generate():
+        def evento(tipo, mensaje):
+            yield f"data: {json.dumps({'tipo': tipo, 'mensaje': mensaje})}\n\n"
 
-    resultados = []
+        resultados = []
+        total      = len(archivos)
 
-    for archivo in archivos:
-        nombre       = archivo.get('nombre', '')
-        hash_archivo = archivo.get('hash_archivo', '')
+        for i, archivo in enumerate(archivos, 1):
+            nombre        = archivo.get('nombre', '')
+            hash_archivo  = archivo.get('hash_archivo', '')
+            metricas_meta = archivo.get('completitud_metadatos') or {}
 
-        texto = Funciones.cargar_texto_temporal(hash_archivo)
-        if not texto:
-            continue
+            yield from evento('archivo', f'[{i}/{total}] {nombre}')
+            yield from evento('info', '  → Cargando texto temporal...')
 
-        resumen_base, metricas_doc = pipeline.procesar_fase2(
-            texto, nombre, hash_archivo, pln_busqueda
-        )
+            texto = Funciones.cargar_texto_temporal(hash_archivo)
+            if not texto:
+                yield from evento('error',
+                    f'  → Sin texto temporal para {nombre}, omitido')
+                continue
 
-        resultados.append({
-            'nombre':           nombre,
-            'hash_archivo':     hash_archivo,
-            'resumen_base':     resumen_base,
-            'perplexidad_base': (metricas_doc.get('resumen') or {}).get('perplexidad'),
-            'tiempo_base':      (metricas_doc.get('resumen') or {}).get('tiempo_segundos'),
-        })
+            yield from evento('ok',
+                f'  → Texto cargado ({len(texto)} chars)')
+            yield f"data: {json.dumps({'tipo': 'info', 'mensaje': '  → Generando resumen con mT5-base (puede tardar)...'})}\n\n"
 
-    return jsonify({'success': True, 'resultados': resultados})
+            resumen_base, metricas_doc = pipeline.procesar_fase2(
+                texto, nombre, hash_archivo, pln_busqueda,
+                completitud_metadatos=metricas_meta
+            )
+
+            res              = metricas_doc.get('resumen') or {}
+            num_chunks       = res.get('num_chunks', 0)
+            tiempo_base      = res.get('tiempo_segundos', 0)
+            perplexidad_base = res.get('perplexidad', '?')
+
+            yield from evento('ok',
+                f'  → mT5-base: {num_chunks} segmentos, '
+                f'{tiempo_base}s, perpl: {perplexidad_base}')
+
+            resultados.append({
+                'nombre':           nombre,
+                'hash_archivo':     hash_archivo,
+                'resumen_base':     resumen_base,
+                'perplexidad_base': res.get('perplexidad'),
+                'tiempo_base':      res.get('tiempo_segundos'),
+            })
+
+        yield from evento('fin', json.dumps({
+            'success':    True,
+            'resultados': resultados,
+        }))
+
+    return Response(generate(),
+                    mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache',
+                             'X-Accel-Buffering': 'no'})
 
 
 @app.route('/indexar-seleccionados', methods=['POST'])

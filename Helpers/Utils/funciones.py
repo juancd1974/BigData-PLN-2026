@@ -140,6 +140,20 @@ class Funciones:
             return False
         if len(freq) < min(30, len(palabras) // 3):
             return False
+
+        # Validación 3: detectar caracteres sueltos repetidos
+        # Textos con fuente mal codificada producen letras sueltas
+        # como "a s a s" o "i i i i" que pasan los checks anteriores
+        tokens_cortos = [p for p in palabras if len(p) == 1]
+        if len(tokens_cortos) / len(palabras) > 0.20:
+            return False
+
+        # Validación 4: ratio mínimo de caracteres alfabéticos
+        # Texto legible debe tener al menos 40% de letras
+        chars_alpha = sum(1 for c in texto if c.isalpha())
+        if chars_alpha / max(len(texto), 1) < 0.40:
+            return False
+
         return True
 
     @staticmethod

@@ -131,6 +131,20 @@ class ElasticSearch:
             print(f"Error al eliminar índice: {e}")
             return False
     
+    def _contar_documentos(self, index: str) -> int:
+        """
+        Retorna el conteo real de documentos en un índice
+        usando la API _count, que excluye documentos eliminados
+        pendientes de purga a diferencia de cat.indices.
+
+        Retorna 0 si el índice no existe o hay error.
+        """
+        try:
+            respuesta = self.client.count(index=index)
+            return respuesta.get('count', 0)
+        except Exception:
+            return 0
+
     def listar_indices(self) -> List[Dict]:
         """Lista todos los índices con información detallada (excluye índices internos)"""
         try:
@@ -146,7 +160,7 @@ class ElasticSearch:
             for idx in indices_filtrados:
                 indices_formateados.append({
                     'nombre': idx.get('index', ''),
-                    'total_documentos': int(idx.get('docs.count', 0)) if idx.get('docs.count', '0').isdigit() else 0,
+                    'total_documentos': self._contar_documentos(idx.get('index', '')),
                     'tamaño': idx.get('store.size', '0b'),
                     'salud': idx.get('health', 'unknown'),
                     'estado': idx.get('status', 'unknown')

@@ -16,6 +16,11 @@ MODELS = [
         "model_class": AutoModelForSeq2SeqLM,
         "description": "Resumen abstractivo (mayor calidad)",
     },
+    {
+        "id": "ELiRF/mt5-base-dacsa-es",
+        "model_class": AutoModelForSeq2SeqLM,
+        "description": "mT5-base fine-tuned resumen español (DACSA)",
+    },
 ]
 
 

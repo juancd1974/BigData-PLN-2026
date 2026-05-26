@@ -1,7 +1,7 @@
 {
-    "nombre_archivo": "up_LEY_1335_DE_2009.pdf",
+    "nombre_archivo": "LEY_1335_DE_2009.pdf",
     "hash_archivo": "sha256:184d1610d59aab1d81ee2743ca36518603c697305ff12def56ba7ed195a3ee12",
-    "fecha_procesamiento": "2026-05-26T00:01:07.906365",
+    "fecha_procesamiento": "2026-05-26T09:52:12.042826",
     "extraccion_texto": {
         "metodo": null,
         "tiempo_segundos": null,
@@ -13,17 +13,23 @@
         "entidades_por_categoria": null
     },
     "metadatos": {
-        "campos_completos": null,
-        "campos_vacios": null,
-        "completitud_porcentaje": null,
-        "detalle_campos": null
+        "campos_completos": 4,
+        "campos_vacios": 1,
+        "completitud_porcentaje": 80,
+        "detalle_campos": {
+            "tipo_norma": true,
+            "numero_norma": true,
+            "anio_norma": true,
+            "entidad_emisora": false,
+            "fecha_documento": true
+        }
     },
     "resumen": {
         "modelo": "google/mt5-base",
-        "tiempo_segundos": 110.33,
-        "num_chunks": 10,
-        "longitud_resumen": 760,
+        "tiempo_segundos": 299.825,
+        "num_chunks": 7,
+        "longitud_resumen": 1708,
         "longitud_texto": 27153,
-        "perplexidad": 13.7157
+        "perplexidad": 87.4931
     }
 }
