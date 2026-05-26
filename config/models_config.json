@@ -1,0 +1,29 @@
+{
+  "summarizer": [
+    {
+      "id": "mt5_small",
+      "nombre": "mT5-small",
+      "descripcion": "Modelo multilingüe T5 pequeño, 300M parámetros, más rápido pero menor calidad",
+      "tipo": "transformers",
+      "modelo_hf": "google/mt5-small",
+      "activo": true,
+      "max_length": 150,
+      "min_length": 10,
+      "chunk_chars": 3000
+    },
+    {
+      "id": "mt5_base",
+      "nombre": "mT5-base",
+      "descripcion": "Modelo multilingüe T5 base, 580M parámetros, mayor calidad de resumen",
+      "tipo": "transformers",
+      "modelo_hf": "google/mt5-base",
+      "activo": false,
+      "max_length": 150,
+      "min_length": 10,
+      "chunk_chars": 3000
+    }
+  ],
+  "configuracion_activa": {
+    "summarizer_activo": "mt5_small"
+  }
+}

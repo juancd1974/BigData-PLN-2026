@@ -1,0 +1,29 @@
+{
+    "nombre_archivo": "up_LEY_1335_DE_2009.pdf",
+    "hash_archivo": "sha256:184d1610d59aab1d81ee2743ca36518603c697305ff12def56ba7ed195a3ee12",
+    "fecha_procesamiento": "2026-05-26T00:01:07.906365",
+    "extraccion_texto": {
+        "metodo": null,
+        "tiempo_segundos": null,
+        "longitud_caracteres": null,
+        "calidad_ok": null
+    },
+    "ner": {
+        "tiempo_ner_segundos": null,
+        "entidades_por_categoria": null
+    },
+    "metadatos": {
+        "campos_completos": null,
+        "campos_vacios": null,
+        "completitud_porcentaje": null,
+        "detalle_campos": null
+    },
+    "resumen": {
+        "modelo": "google/mt5-base",
+        "tiempo_segundos": 110.33,
+        "num_chunks": 10,
+        "longitud_resumen": 760,
+        "longitud_texto": 27153,
+        "perplexidad": 13.7157
+    }
+}

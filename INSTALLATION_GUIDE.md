@@ -8,17 +8,19 @@ Incluye configuración para desarrollo local y para despliegues en producción/c
 ## Requisitos Previos
 
 - Windows 10 / 11 (64 bits)
-- Python 3.10 o superior
+- Python 3.11 (recomendado)
 - Git
 
 ---
 
 ## 0. Requisitos del Sistema (Python)
 
-Antes de continuar, verifique que tiene instalado **Python 3.10 o superior**.
+Antes de continuar, verifique que tiene instalado **Python 3.11 (recomendado)**.
 
 Descarga oficial:
 [https://www.python.org/downloads/](https://www.python.org/downloads/)
+
+> **Nota de versión:** Python 3.14 presenta incompatibilidades con gensim en Windows. Python 3.12 es compatible pero 3.11 tiene mejor cobertura de wheels precompilados. No se recomienda Python 3.13 ni 3.14 para este proyecto.
 
 > **Importante (Windows):** Durante la instalación, marque obligatoriamente la casilla **"Add Python to PATH"**. Si no lo hace, los comandos `python` y `pip` no funcionarán en la terminal.
 
@@ -203,8 +205,10 @@ Motor de reconocimiento óptico de caracteres (OCR). Se usa como fallback cuando
 Con el entorno virtual activo, descargue el modelo grande en español:
 
 ```powershell
-python -m spacy download es_core_news_lg
+pip install https://github.com/explosion/spacy-models/releases/download/es_core_news_lg-3.8.0/es_core_news_lg-3.8.0-py3-none-any.whl
 ```
+
+> **Nota:** El comando `python -m spacy download` puede fallar por incompatibilidad de versiones. Usar la URL directa del wheel garantiza la versión correcta para spaCy 3.8.x.
 
 Este modelo ofrece mayor precisión en NER (reconocimiento de entidades) y POS tagging para documentos normativos en español.
 
@@ -228,8 +232,65 @@ A partir de la segunda ejecución, cargan desde la caché sin necesidad de inter
 |--------|-----|---------------|
 | `paraphrase-multilingual-MiniLM-L12-v2` | Embeddings semánticos (RAG) | ~470 MB |
 | `google/mt5-small` | Resumen abstractivo de documentos | ~1.2 GB |
+| `google/mt5-base` | Resumen abstractivo (mayor calidad) | ~2.2 GB |
 
-> **Primera ejecución:** La descarga de ambos modelos puede tomar 5–15 minutos según la velocidad de internet.
+> **Primera ejecución:** La descarga de los tres modelos puede tomar 15–30 minutos según la velocidad de internet.
+
+### 4.3 Instalación con soporte GPU (opcional, recomendado para producción)
+
+Si el equipo tiene tarjeta gráfica NVIDIA, reemplazar torch CPU por la versión CUDA para acelerar el procesamiento de mT5 y XLM-RoBERTa.
+
+**Paso 1 — Verificar versión CUDA del driver:**
+
+```powershell
+nvidia-smi
+```
+
+El valor "CUDA Version" en la esquina superior derecha indica la versión máxima soportada.
+
+**Paso 2 — Desinstalar torch CPU:**
+
+```powershell
+pip uninstall torch -y
+```
+
+**Paso 3 — Instalar torch con CUDA según la versión detectada:**
+
+Para CUDA 12.1 (RTX 1650 Ti):
+```powershell
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+Para CUDA 12.4 o superior (RTX 5060):
+```powershell
+pip install torch --index-url https://download.pytorch.org/whl/cu124
+```
+
+**Paso 4 — Verificar que torch detecta la GPU:**
+
+```powershell
+python -c "import torch; print(torch.__version__); print('GPU disponible:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No detectada')"
+```
+
+> **Nota:** La RTX 1650 Ti tiene 4 GB de VRAM. Los modelos mT5-base y XLM-RoBERTa-large no pueden cargarse simultáneamente en GPU con esta tarjeta. El sistema los cargará y liberará secuencialmente de forma automática. La RTX 5060 no tiene esta restricción.
+
+### 4.4 Predescargar modelos HuggingFace (recomendado)
+
+Para evitar esperas durante el primer procesamiento, ejecutar antes de usar la aplicación:
+
+```powershell
+python download_models.py
+```
+
+Este script descarga y almacena en caché los modelos:
+- `google/mt5-small`
+- `google/mt5-base`
+
+Los modelos se guardan en:
+```
+C:\Users\<usuario>\.cache\huggingface\hub\
+```
+y no necesitan descargarse nuevamente en ejecuciones posteriores.
 
 ---
 
@@ -366,4 +427,7 @@ La aplicación estará disponible en `http://127.0.0.1:5000`.
 | spaCy | `python -c "import spacy; spacy.load('es_core_news_lg')"` |
 | Tesseract | `tesseract --version` |
 | Poppler | `pdftotext --version` |
+| gensim | `python -c "import gensim; print(gensim.__version__)"` |
+| torch GPU | `python -c "import torch; print(torch.cuda.is_available())"` |
+| Modelos HF | `python download_models.py` |
 | Aplicación Flask | Acceder a `http://127.0.0.1:5000` en el navegador |

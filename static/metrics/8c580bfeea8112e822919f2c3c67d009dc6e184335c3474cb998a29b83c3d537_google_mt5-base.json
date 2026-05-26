@@ -1,0 +1,29 @@
+{
+    "nombre_archivo": "up_Ley_1133_de_2007.pdf",
+    "hash_archivo": "sha256:8c580bfeea8112e822919f2c3c67d009dc6e184335c3474cb998a29b83c3d537",
+    "fecha_procesamiento": "2026-05-26T00:00:40.295906",
+    "extraccion_texto": {
+        "metodo": null,
+        "tiempo_segundos": null,
+        "longitud_caracteres": null,
+        "calidad_ok": null
+    },
+    "ner": {
+        "tiempo_ner_segundos": null,
+        "entidades_por_categoria": null
+    },
+    "metadatos": {
+        "campos_completos": null,
+        "campos_vacios": null,
+        "completitud_porcentaje": null,
+        "detalle_campos": null
+    },
+    "resumen": {
+        "modelo": "google/mt5-base",
+        "tiempo_segundos": 19.208,
+        "num_chunks": 5,
+        "longitud_resumen": 199,
+        "longitud_texto": 12657,
+        "perplexidad": 45.5453
+    }
+}

@@ -10,8 +10,10 @@ los modelos seq2seq necesitan la sintaxis completa para generar texto coherente.
 Eliminar stopwords antes del encoder degrada la calidad del resumen.
 """
 
+import math
 import time
-from typing import Optional
+import torch
+from typing import Dict, Optional, Tuple
 
 from Helpers.PLN.text_preprocessing import preprocesar_para_transformer
 
@@ -163,3 +165,90 @@ def generar_resumen_abstractivo(pipeline_resumen,
     except Exception as exc:
         print(f" ✗ {exc}")
         return combinado   # fallback: devolver la concatenación sin reduce
+
+
+def calcular_perplexidad(pipeline_resumen, texto: str) -> float:
+    """
+    Calcula la perplejidad del texto usando el modelo mT5 del pipeline.
+
+    La perplejidad mide qué tan predecible es el texto para el modelo.
+    Un valor más bajo indica texto más fluido y coherente.
+    Fórmula: PP = exp(loss_promedio), donde loss_promedio es el promedio
+    de cross-entropy losses por token obtenido del forward pass del modelo.
+
+    Se ejecuta en torch.no_grad() para no acumular gradientes ni
+    modificar los pesos durante la evaluación.
+
+    Args:
+        pipeline_resumen: Pipeline de HuggingFace cargado.
+        texto:            Texto a evaluar (normalmente el resumen generado).
+
+    Returns:
+        Perplejidad como float redondeado a 4 decimales,
+        o -1.0 si el texto está vacío, el pipeline no está disponible,
+        o si ocurre cualquier error durante el cálculo.
+    """
+    if not pipeline_resumen or not texto or not texto.strip():
+        return -1.0
+    try:
+        device = pipeline_resumen.model.device
+        inputs = pipeline_resumen.tokenizer(
+            texto, return_tensors='pt', truncation=True, max_length=512
+        )
+        input_ids = inputs['input_ids'].to(device)
+        with torch.no_grad():
+            outputs = pipeline_resumen.model(input_ids=input_ids, labels=input_ids)
+        return round(math.exp(outputs.loss.item()), 4)
+    except Exception as exc:
+        print(f"  ✗ Error al calcular perplejidad: {exc}")
+        return -1.0
+
+
+def generar_resumen_con_metricas(pipeline_resumen,
+                                  texto: str,
+                                  max_length: int = 150,
+                                  min_length: int = 10,
+                                  chunk_chars: int = 3000) -> Tuple[str, Dict]:
+    """
+    Wrapper de generar_resumen_abstractivo() que agrega métricas de ejecución.
+
+    Captura tiempo total, número estimado de chunks, longitudes de entrada
+    y salida, y perplejidad del resumen generado. La perplejidad se calcula
+    sobre el resumen (no sobre el texto original) para medir la calidad
+    lingüística de la salida del modelo.
+
+    Args:
+        pipeline_resumen: Pipeline de HuggingFace (None/False → retorna ("", {})).
+        texto:            Texto de la norma en español.
+        max_length:       Máximo de tokens a generar por fragmento.
+        min_length:       Mínimo de tokens generados.
+        chunk_chars:      Tamaño máximo de cada chunk en caracteres.
+
+    Returns:
+        Tupla (resumen, metricas). metricas contiene modelo, tiempo_segundos,
+        num_chunks, longitud_resumen, longitud_texto y perplexidad.
+        Retorna ("", {}) si el pipeline no está disponible.
+    """
+    if not pipeline_resumen:
+        return "", {}
+
+    inicio = time.time()
+    num_chunks = max(1, math.ceil(len(texto) / chunk_chars))
+
+    resumen = generar_resumen_abstractivo(
+        pipeline_resumen, texto, max_length, min_length, chunk_chars
+    )
+
+    perplexidad = calcular_perplexidad(pipeline_resumen, resumen)
+    tiempo_total = round(time.time() - inicio, 3)
+
+    metricas: Dict = {
+        'modelo': pipeline_resumen.model.config.name_or_path,
+        'tiempo_segundos': tiempo_total,
+        'num_chunks': num_chunks,
+        'longitud_resumen': len(resumen),
+        'longitud_texto': len(texto),
+        'perplexidad': perplexidad,
+    }
+
+    return resumen, metricas

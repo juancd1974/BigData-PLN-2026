@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NormaSearch — Métricas</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+          crossorigin="anonymous">
+    <link href="{{ url_for('static', filename='css/landingPage.css') }}" rel="stylesheet">
+</head>
+<body>
+<header class="header">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2 class="h3 mb-0">NormaSearch
+                {% if session.get('usuario') %}<b>[{{ session.get('usuario') }}]</b>{% endif %}
+            </h2>
+            <nav>
+                <ul class="nav">
+                    <li class="nav-item"><a class="nav-link" href="/">Inicio</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/buscador">Buscador</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/about">Acerca de</a></li>
+                    {% if session.get('logged_in') %}
+                    <li class="nav-item"><a class="nav-link" href="/admin">Panel Admin</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/logout">Cerrar sesión</a></li>
+                    {% endif %}
+                </ul>
+            </nav>
+        </div>
+    </div>
+</header>
+
+<main class="main_2">
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <div>
+                <h1 class="mb-1">Panel de Métricas</h1>
+                <p class="text-muted mb-0">
+                    Comparación de modelos y métricas operacionales del pipeline de procesamiento
+                </p>
+            </div>
+            <button class="btn btn-primary boton_buscar" onclick="actualizar()">
+                Actualizar
+            </button>
+        </div>
+
+        <!-- ── Sección 3: Resumen comparativo por modelo ── -->
+        <div class="card buscador_1 mb-4 mt-3">
+            <div class="card-header">
+                <h5 class="mb-0">Resumen Comparativo por Modelo de Resumen</h5>
+            </div>
+            <div class="card-body p-0">
+                <div id="tabla-modelos-wrapper">
+                    {% set por_modelo = resumen.get('por_modelo', {}) %}
+                    {% if por_modelo %}
+                    <div class="table-responsive">
+                        <table class="table table-striped table-bordered table-hover mb-0" id="tabla-modelos">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Modelo</th>
+                                    <th class="text-center">Total docs</th>
+                                    <th class="text-center">Perpl. promedio</th>
+                                    <th class="text-center">Perpl. mín.</th>
+                                    <th class="text-center">Perpl. máx.</th>
+                                    <th class="text-center">Tiempo prom. (s)</th>
+                                    <th class="text-center">Completitud meta. (%)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for nombre, datos in por_modelo.items() %}
+                                <tr>
+                                    <td><code>{{ nombre }}</code></td>
+                                    <td class="text-center">{{ datos.get('total_documentos', 0) }}</td>
+                                    <td class="text-center">
+                                        {% if datos.get('perplexidad_promedio') is not none %}
+                                            {{ datos.perplexidad_promedio }}
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if datos.get('perplexidad_min') is not none %}
+                                            {{ datos.perplexidad_min }}
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if datos.get('perplexidad_max') is not none %}
+                                            {{ datos.perplexidad_max }}
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if datos.get('tiempo_promedio_segundos') is not none %}
+                                            {{ datos.tiempo_promedio_segundos }}
+                                        {% else %}—{% endif %}
+                                    </td>
+                                    <td class="text-center">
+                                        {% if datos.get('completitud_metadatos_promedio') is not none %}
+                                            {{ datos.completitud_metadatos_promedio }}%
+                                        {% else %}—{% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    {% else %}
+                    <p class="text-muted text-center py-4 mb-0" id="msg-sin-datos-modelos">
+                        Sin datos aún. Procese documentos para ver métricas.
+                    </p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Sección 4: Métricas de extracción ── -->
+        {% set ext = resumen.get('extraccion', {}) %}
+        <div class="row g-3 mb-4">
+            <div class="col-sm-6 col-md-3">
+                <div class="card text-center buscador_1 h-100">
+                    <div class="card-body">
+                        <h6 class="card-subtitle text-muted mb-2">Total procesados</h6>
+                        <p class="display-6 mb-0" id="val-total">{{ ext.get('total_documentos', 0) }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-md-3">
+                <div class="card text-center buscador_1 h-100">
+                    <div class="card-body">
+                        <h6 class="card-subtitle text-muted mb-2">Extraídos con PyMuPDF</h6>
+                        <p class="display-6 mb-0" id="val-pymupdf">{{ ext.get('pymupdf_count', 0) }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-md-3">
+                <div class="card text-center buscador_1 h-100">
+                    <div class="card-body">
+                        <h6 class="card-subtitle text-muted mb-2">Extraídos con OCR</h6>
+                        <p class="display-6 mb-0" id="val-ocr">{{ ext.get('ocr_count', 0) }}</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-sm-6 col-md-3">
+                <div class="card text-center buscador_1 h-100">
+                    <div class="card-body">
+                        <h6 class="card-subtitle text-muted mb-2">Tasa extracción exitosa</h6>
+                        <p class="display-6 mb-0" id="val-tasa">{{ ext.get('tasa_extraccion_exitosa', 0.0) }}%</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Sección 5: Detalle por documento ── -->
+        <div class="card buscador_1 mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">Detalle por Documento</h5>
+            </div>
+            <div class="card-body p-0">
+                {% set docs_ord = metricas | sort(attribute='fecha_procesamiento', reverse=True) %}
+                {% if docs_ord %}
+                <div class="table-responsive">
+                    <table class="table table-striped table-bordered table-hover table-sm mb-0">
+                        <thead class="table-dark">
+                            <tr>
+                                <th>Nombre archivo</th>
+                                <th class="text-center">Método</th>
+                                <th class="text-center">Completitud (%)</th>
+                                <th>Modelo resumen</th>
+                                <th class="text-center">Perplejidad</th>
+                                <th class="text-center">T. resumen (s)</th>
+                                <th class="text-center">Fecha</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tabla-detalle">
+                            {% for m in docs_ord %}
+                            {% set ext_m  = m.get('extraccion_texto', {}) %}
+                            {% set meta_m = m.get('metadatos', {}) %}
+                            {% set res_m  = m.get('resumen', {}) %}
+                            {% set perp   = res_m.get('perplexidad') %}
+                            <tr class="fila-detalle">
+                                <td class="text-truncate" style="max-width:200px"
+                                    title="{{ m.get('nombre_archivo', '') }}">
+                                    {{ m.get('nombre_archivo', '—') }}
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge {% if ext_m.get('metodo') == 'ocr' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
+                                        {{ ext_m.get('metodo') or '—' }}
+                                    </span>
+                                </td>
+                                <td class="text-center">
+                                    {% if meta_m.get('completitud_porcentaje') is not none %}
+                                        {{ meta_m.completitud_porcentaje }}%
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td>
+                                    <small>{{ res_m.get('modelo') or '—' }}</small>
+                                </td>
+                                <td class="text-center">
+                                    {% if perp is none %}
+                                        —
+                                    {% elif perp == -1.0 %}
+                                        <span class="text-danger">N/A</span>
+                                    {% else %}
+                                        {{ perp }}
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if res_m.get('tiempo_segundos') is not none %}
+                                        {{ res_m.tiempo_segundos }}
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {{ m.get('fecha_procesamiento', '')[:10] or '—' }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <div class="d-flex justify-content-between align-items-center px-3 py-2">
+                    <small class="text-muted" id="pag-info"></small>
+                    <div>
+                        <button class="btn btn-sm btn-outline-secondary me-1"
+                                id="btn-prev" onclick="cambiarPagina(-1)">‹ Anterior</button>
+                        <button class="btn btn-sm btn-outline-secondary"
+                                id="btn-next" onclick="cambiarPagina(1)">Siguiente ›</button>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4 mb-0">
+                    Sin datos aún. Procese documentos para ver métricas.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</main>
+
+<footer class="footer text-center">
+    <p class="mb-0">NormaSearch © 2026 — Juan Carlos Díaz González</p>
+    <p class="mb-0">Maestría en Analítica de Datos · Universidad Central</p>
+    <p class="mb-0">v{{ version }}</p>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq4cvVmFh9vju3MXgpoK"
+        crossorigin="anonymous"></script>
+<script>
+    // ── Paginación ──────────────────────────────────────────────
+    const FILAS_POR_PAGINA = 10;
+    let paginaActual = 1;
+
+    function initPaginacion() {
+        const filas = document.querySelectorAll('.fila-detalle');
+        if (!filas.length) return;
+        mostrarPagina(1);
+    }
+
+    function mostrarPagina(pagina) {
+        const filas = Array.from(document.querySelectorAll('.fila-detalle'));
+        const total = filas.length;
+        const totalPaginas = Math.ceil(total / FILAS_POR_PAGINA);
+        paginaActual = Math.max(1, Math.min(pagina, totalPaginas));
+
+        const inicio = (paginaActual - 1) * FILAS_POR_PAGINA;
+        filas.forEach((f, i) => {
+            f.style.display = (i >= inicio && i < inicio + FILAS_POR_PAGINA) ? '' : 'none';
+        });
+
+        const info    = document.getElementById('pag-info');
+        const btnPrev = document.getElementById('btn-prev');
+        const btnNext = document.getElementById('btn-next');
+        if (info)    info.textContent  = `Página ${paginaActual} de ${totalPaginas} (${total} documentos)`;
+        if (btnPrev) btnPrev.disabled  = paginaActual === 1;
+        if (btnNext) btnNext.disabled  = paginaActual === totalPaginas;
+    }
+
+    function cambiarPagina(delta) {
+        mostrarPagina(paginaActual + delta);
+    }
+
+    // ── Actualizar secciones 3 y 4 ─────────────────────────────
+    function actualizar() {
+        fetch('/metricas/datos')
+            .then(r => r.json())
+            .then(data => {
+                // Actualizar cards de extracción
+                const ext = data.extraccion || {};
+                document.getElementById('val-total').textContent   = ext.total_documentos ?? 0;
+                document.getElementById('val-pymupdf').textContent = ext.pymupdf_count ?? 0;
+                document.getElementById('val-ocr').textContent     = ext.ocr_count ?? 0;
+                document.getElementById('val-tasa').textContent    = (ext.tasa_extraccion_exitosa ?? 0) + '%';
+
+                // Reconstruir tabla de modelos
+                const wrapper    = document.getElementById('tabla-modelos-wrapper');
+                const porModelo  = data.por_modelo || {};
+                const nombres    = Object.keys(porModelo);
+
+                if (!nombres.length) {
+                    wrapper.innerHTML = '<p class="text-muted text-center py-4 mb-0">Sin datos aún. Procese documentos para ver métricas.</p>';
+                    return;
+                }
+
+                const fmt = v => (v !== null && v !== undefined) ? v : '—';
+                const fmtPct = v => (v !== null && v !== undefined) ? v + '%' : '—';
+
+                const filas = nombres.map(nombre => {
+                    const d = porModelo[nombre];
+                    return `<tr>
+                        <td><code>${nombre}</code></td>
+                        <td class="text-center">${d.total_documentos ?? 0}</td>
+                        <td class="text-center">${fmt(d.perplexidad_promedio)}</td>
+                        <td class="text-center">${fmt(d.perplexidad_min)}</td>
+                        <td class="text-center">${fmt(d.perplexidad_max)}</td>
+                        <td class="text-center">${fmt(d.tiempo_promedio_segundos)}</td>
+                        <td class="text-center">${fmtPct(d.completitud_metadatos_promedio)}</td>
+                    </tr>`;
+                }).join('');
+
+                wrapper.innerHTML = `
+                    <div class="table-responsive">
+                        <table class="table table-striped table-bordered table-hover mb-0">
+                            <thead class="table-dark">
+                                <tr>
+                                    <th>Modelo</th>
+                                    <th class="text-center">Total docs</th>
+                                    <th class="text-center">Perpl. promedio</th>
+                                    <th class="text-center">Perpl. mín.</th>
+                                    <th class="text-center">Perpl. máx.</th>
+                                    <th class="text-center">Tiempo prom. (s)</th>
+                                    <th class="text-center">Completitud meta. (%)</th>
+                                </tr>
+                            </thead>
+                            <tbody>${filas}</tbody>
+                        </table>
+                    </div>`;
+            })
+            .catch(() => alert('Error al obtener datos actualizados.'));
+    }
+
+    document.addEventListener('DOMContentLoaded', initPaginacion);
+</script>
+</body>
+</html>

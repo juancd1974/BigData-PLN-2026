@@ -10,6 +10,7 @@ Requisito: python -m spacy download es_core_news_lg
 
 import os
 import re
+import time
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -336,3 +337,176 @@ def extraer_temas(nlp: Any, texto: str, top_n: int = 10) -> List[Tuple[str, floa
     if total > 0:
         return [(lema, (freq / total) * 100) for lema, freq in temas]
     return [(lema, 0.0) for lema, _ in temas]
+
+
+def optimizar_nlp_pipeline(nlp: Any) -> Any:
+    """
+    Desactiva 'parser' y 'senter' del pipeline si existen, manteniendo
+    'ner' y 'tok2vec' activos para reducir tiempo de procesamiento.
+
+    Args:
+        nlp: Modelo spaCy cargado.
+
+    Returns:
+        Modelo spaCy con pipeline optimizado.
+    """
+    for componente in ('parser', 'senter'):
+        if componente in nlp.pipe_names:
+            nlp.disable_pipe(componente)
+    print(f"  Componentes activos: {list(nlp.pipe_names)}")
+    return nlp
+
+
+def construir_entity_ruler(nlp: Any) -> Any:
+    """
+    Agrega un EntityRuler al final del pipeline con patrones mínimos de ORG
+    para entidades jurídicas colombianas que spaCy frecuentemente omite.
+
+    Con overwrite_ents=False el ruler añade entidades solo donde NER no
+    encontró nada, preservando los resultados del modelo estadístico.
+
+    Args:
+        nlp: Modelo spaCy cargado.
+
+    Returns:
+        Modelo spaCy con EntityRuler agregado.
+    """
+    ruler = nlp.add_pipe('entity_ruler', last=True, config={'overwrite_ents': False})
+    orgs = [
+        "Ministerio de Agricultura y Desarrollo Rural",
+        "Ministerio de Agricultura",
+        "MADR",
+        "Contraloría General de la República",
+        "Contraloría Delegada para el Sector Agropecuario",
+        "INVIMA",
+        "ICA",
+        "FINAGRO",
+        "Banco Agrario",
+        "DNP",
+        "DANE",
+        "Congreso de la República",
+    ]
+    ruler.add_patterns([{"label": "ORG", "pattern": org} for org in orgs])
+    return nlp
+
+
+def normalizar_encabezado_para_ner(texto: str) -> str:
+    """
+    Normaliza las primeras 30 líneas del texto para mejorar la detección NER.
+
+    Convierte a Title Case únicamente las líneas donde más del 80 % de sus
+    caracteres alfabéticos están en mayúsculas, ya que spaCy entrenado sobre
+    noticias asigna mejor las etiquetas ORG/PER en texto con capitalización
+    convencional que en texto completamente en mayúsculas.
+
+    Args:
+        texto: Texto completo del documento.
+
+    Returns:
+        String con las primeras 30 líneas normalizadas.
+    """
+    lineas = texto.split('\n')[:30]
+    resultado = []
+    for linea in lineas:
+        chars_alfa = [c for c in linea if c.isalpha()]
+        if chars_alfa:
+            pct_mayus = sum(1 for c in chars_alfa if c.isupper()) / len(chars_alfa)
+            if pct_mayus > 0.8:
+                linea = linea.title()
+        resultado.append(linea)
+    return '\n'.join(resultado)
+
+
+def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
+    """
+    Extrae entidades con normalización de encabezado, soporte para documentos
+    largos y métricas de ejecución.
+
+    Mejoras respecto a extraer_entidades():
+      - Normaliza el encabezado a Title Case antes de procesar con NER.
+      - Divide automáticamente documentos > 800 000 chars en chunks.
+      - Extrae fechas adicionales de las primeras 50 líneas con regex
+        sin duplicar las que ya encontró NER.
+      - Retorna métricas de tiempo y conteo por categoría.
+
+    Args:
+        nlp:   Modelo spaCy cargado.
+        texto: Texto completo del documento.
+
+    Returns:
+        Tupla (entidades, metricas). entidades tiene la misma estructura
+        que extraer_entidades(). metricas incluye tiempo_ner_segundos y
+        entidades_por_categoria.
+    """
+    inicio = time.time()
+
+    lineas = texto.split('\n')
+    encabezado_norm = normalizar_encabezado_para_ner(texto)
+    texto_proc = encabezado_norm + '\n' + '\n'.join(lineas[30:])
+
+    if len(texto_proc) <= 800_000:
+        entidades = extraer_entidades(nlp, texto_proc)
+    else:
+        chunks = dividir_en_chunks(texto_proc, 800_000)
+        entidades: Dict[str, List[str]] = {
+            k: [] for k in ('personas', 'lugares', 'organizaciones', 'fechas', 'leyes', 'otros')
+        }
+        for chunk in chunks:
+            for key, vals in extraer_entidades(nlp, chunk).items():
+                entidades[key].extend(vals)
+
+    primeras_50 = '\n'.join(lineas[:50])
+    fechas_ner = set(entidades['fechas'])
+    for m in _RE_FECHA_LARGA.finditer(primeras_50):
+        if m.group(1) not in fechas_ner:
+            entidades['fechas'].append(m.group(1))
+    for m in _RE_FECHA_MES_ANIO.finditer(primeras_50):
+        candidata = f"{m.group(1)} de {m.group(2)}"
+        if candidata not in fechas_ner:
+            entidades['fechas'].append(candidata)
+
+    for key in entidades:
+        entidades[key] = list(dict.fromkeys(entidades[key]))
+
+    tiempo_total = round(time.time() - inicio, 3)
+    metricas: Dict = {
+        'tiempo_ner_segundos': tiempo_total,
+        'entidades_por_categoria': {k: len(v) for k, v in entidades.items()},
+    }
+
+    return entidades, metricas
+
+
+def extraer_metadatos_mejorado(nlp: Any, texto: str,
+                               nombre_archivo: str = '') -> Tuple[Dict, Dict]:
+    """
+    Extrae metadatos de una norma y calcula métricas de completitud.
+
+    Llama internamente a extraer_metadatos_norma() y evalúa los cinco
+    campos clave para reportar qué porcentaje del registro está completo.
+
+    Args:
+        nlp:             Modelo spaCy cargado.
+        texto:           Texto completo del documento.
+        nombre_archivo:  Nombre del archivo fuente (opcional, mejora extracción).
+
+    Returns:
+        Tupla (metadatos, metricas). metadatos es el dict de
+        extraer_metadatos_norma(). metricas contiene campos_completos,
+        campos_vacios, completitud_porcentaje y detalle_campos.
+    """
+    metadatos = extraer_metadatos_norma(nlp, texto, nombre_archivo)
+
+    campos_clave = ('tipo_norma', 'numero_norma', 'anio_norma',
+                    'entidad_emisora', 'fecha_documento')
+    detalle = {campo: bool(metadatos.get(campo)) for campo in campos_clave}
+    completos = sum(detalle.values())
+
+    metricas: Dict = {
+        'campos_completos': completos,
+        'campos_vacios': len(campos_clave) - completos,
+        'completitud_porcentaje': round((completos / len(campos_clave)) * 100, 1),
+        'detalle_campos': detalle,
+    }
+
+    return metadatos, metricas

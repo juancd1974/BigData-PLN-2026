@@ -158,7 +158,7 @@
                                        onchange="toggleSeleccionarTodos()">
                                 <label class="form-check-label" for="seleccionar_todos">Seleccionar todos</label>
                             </div>
-                            <button type="button" class="btn btn-success" id="btn_cargar" onclick="cargarSeleccionados()">
+                            <button type="button" class="btn btn-success" id="btn_cargar" onclick="iniciarProcesamiento()">
                                 <i class="bi bi-cloud-upload"></i> <span id="texto_btn_cargar">Cargar seleccionados</span>
                             </button>
                         </div>
@@ -194,6 +194,95 @@
                         <div id="log_progreso"></div>
                     </div>
                 </div>
+            </div>
+
+            <!-- PASO 6: Resultados Fase 1 + decisión Fase 2 -->
+            <div id="seccion_fase1" style="display:none">
+              <div class="card mb-4">
+                <div class="card-header">
+                  <strong>5. Resultados con mT5-small</strong>
+                </div>
+                <div class="card-body">
+                  <div class="table-responsive mb-3">
+                    <table class="table table-bordered table-hover">
+                      <thead class="table-dark">
+                        <tr>
+                          <th>Archivo</th>
+                          <th>Completitud metadatos</th>
+                          <th>Perplejidad</th>
+                          <th>Tiempo (s)</th>
+                          <th>Resumen generado</th>
+                        </tr>
+                      </thead>
+                      <tbody id="tabla_fase1"></tbody>
+                    </table>
+                  </div>
+                  <div class="alert alert-info" id="estimacion_fase2_msg"></div>
+                  <div class="d-flex gap-2 justify-content-end">
+                    <button class="btn btn-secondary" onclick="saltarFase2()">
+                      No, continuar sin comparar
+                    </button>
+                    <button class="btn btn-primary boton_buscar"
+                            id="btn_fase2" onclick="iniciarFase2()">
+                      Sí, comparar con mT5-base
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PASO 7: Progreso Fase 2 -->
+            <div id="seccion_progreso_fase2" style="display:none">
+              <div class="card mb-4">
+                <div class="card-header">
+                  <strong>6. Procesando con mT5-base...</strong>
+                </div>
+                <div class="card-body p-2">
+                  <div id="log_fase2"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PASO 8: Comparación y selección -->
+            <div id="seccion_comparacion" style="display:none">
+              <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between
+                            align-items-center">
+                  <strong>7. Comparación de modelos — Selecciona el resumen
+                          a indexar</strong>
+                  <div class="d-flex gap-2">
+                    <button class="btn btn-sm btn-outline-primary"
+                            onclick="seleccionarTodosModelo('small')">
+                      Todos mT5-small
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary"
+                            onclick="seleccionarTodosModelo('base')">
+                      Todos mT5-base
+                    </button>
+                  </div>
+                </div>
+                <div class="card-body">
+                  <div id="comparacion_documentos"></div>
+                  <div class="d-flex justify-content-end mt-3">
+                    <button class="btn btn-success boton_buscar"
+                            onclick="indexarSeleccionados()">
+                      Indexar seleccionados en Elasticsearch
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- PASO 9: Resultado final -->
+            <div id="seccion_resultado_final" style="display:none">
+              <div class="card mb-4">
+                <div class="card-header">
+                  <strong>8. Indexación completada</strong>
+                </div>
+                <div class="card-body">
+                  <div id="resultado_final_msg"></div>
+                </div>
+              </div>
             </div>
 
             <!-- Spinner (ZIP y webscraping) -->
@@ -473,6 +562,282 @@
         }
         function ocultarCargando() {
             document.getElementById('div_cargando').style.display = 'none';
+        }
+
+        // ── Estado global para el flujo por fases ─────────────────
+        let resultadosFase1 = [];
+        let resultadosFase2 = [];
+
+        async function iniciarProcesamiento() {
+          const checks = document.querySelectorAll(
+            '#tabla_archivos input[type=checkbox]:checked'
+          );
+          const archivosSeleccionados = Array.from(checks).map(cb =>
+            archivosActuales[parseInt(cb.dataset.index)]
+          ).filter(Boolean);
+
+          if (!archivosSeleccionados.length) {
+            alert('Selecciona al menos un archivo.');
+            return;
+          }
+
+          if (metodoActual !== 'carpeta') {
+            cargarSeleccionados();
+            return;
+          }
+
+          // Subir archivos al servidor primero
+          mostrarCargando('Subiendo archivos al servidor...');
+          const formData = new FormData();
+          archivosSeleccionados.forEach(a => {
+            if (a.file) formData.append('archivos', a.file);
+          });
+
+          try {
+            const resp = await fetch('/subir-pdfs-carpeta', {
+              method: 'POST', body: formData
+            });
+            const data = await resp.json();
+            ocultarCargando();
+            if (!data.success) {
+              alert('Error al subir archivos: ' + data.error);
+              return;
+            }
+            // Ahora los archivos tienen ruta del servidor
+            procesarFase1(data.archivos);
+          } catch(e) {
+            ocultarCargando();
+            alert('Error de conexión: ' + e.message);
+          }
+        }
+
+        async function procesarFase1(archivos) {
+          const index = document.getElementById('select_index').value;
+          document.getElementById('seccion_fase1').style.display = 'none';
+          document.getElementById('seccion_progreso').style.display = 'block';
+          document.getElementById('log_progreso').innerHTML = '';
+          logLinea('Iniciando procesamiento con mT5-small...', 'log-progreso');
+
+          const payload = {
+            archivos: archivos.map(a => ({
+              ruta: a.ruta,
+              nombre: a.nombre,
+              hash_archivo: a.hash_archivo || ''
+            })),
+            index: index
+          };
+
+          try {
+            logLinea('Procesando documentos (esto puede tardar)...', 'log-progreso');
+            const resp = await fetch('/procesar-fase1', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify(payload)
+            });
+            const data = await resp.json();
+
+            if (!data.success) {
+              logLinea('Error: ' + (data.error || 'Error desconocido'), 'log-error');
+              return;
+            }
+
+            resultadosFase1 = data.resultados;
+            mostrarResultadosFase1(data.resultados, data.estimacion_fase2);
+
+          } catch(e) {
+            logLinea('Error de conexión: ' + e.message, 'log-error');
+          }
+        }
+
+        function mostrarResultadosFase1(resultados, estimacion) {
+          document.getElementById('seccion_progreso').style.display = 'none';
+          document.getElementById('seccion_fase1').style.display = 'block';
+
+          const tbody = document.getElementById('tabla_fase1');
+          tbody.innerHTML = resultados.map(r => `
+            <tr>
+              <td>${r.nombre}</td>
+              <td>${r.completitud_metadatos ?? '—'}%</td>
+              <td>${r.perplexidad_small === -1 ? '<span class="text-danger">N/A</span>' : r.perplexidad_small}</td>
+              <td>${r.tiempo_small ?? '—'}</td>
+              <td><small class="text-muted">${(r.resumen_small || '').substring(0, 150)}${r.resumen_small && r.resumen_small.length > 150 ? '...' : ''}</small></td>
+            </tr>
+          `).join('');
+
+          const msg = document.getElementById('estimacion_fase2_msg');
+          if (estimacion) {
+            msg.textContent = `¿Comparar con mT5-base? ${estimacion.mensaje} adicionales.`;
+          }
+        }
+
+        async function iniciarFase2() {
+          document.getElementById('btn_fase2').disabled = true;
+          document.getElementById('seccion_fase1').style.display = 'none';
+          document.getElementById('seccion_progreso_fase2').style.display = 'block';
+
+          const log = document.getElementById('log_fase2');
+          log.innerHTML = '<p class="text-info">Procesando con mT5-base...</p>';
+
+          const archivos = resultadosFase1.map(r => ({
+            nombre: r.nombre,
+            hash_archivo: r.hash_archivo
+          }));
+
+          try {
+            const resp = await fetch('/procesar-fase2', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({archivos})
+            });
+            const data = await resp.json();
+
+            if (!data.success) {
+              log.innerHTML += `<p class="text-danger">Error: ${data.error}</p>`;
+              return;
+            }
+
+            resultadosFase2 = data.resultados;
+            log.innerHTML += '<p class="text-success">✓ Procesamiento completado</p>';
+            setTimeout(() => mostrarComparacion(), 1000);
+
+          } catch(e) {
+            log.innerHTML += `<p class="text-danger">Error: ${e.message}</p>`;
+          }
+        }
+
+        function saltarFase2() {
+          resultadosFase2 = [];
+          mostrarComparacion();
+        }
+
+        function mostrarComparacion() {
+          document.getElementById('seccion_fase1').style.display = 'none';
+          document.getElementById('seccion_progreso_fase2').style.display = 'none';
+          document.getElementById('seccion_comparacion').style.display = 'block';
+
+          // Deshabilitar botón "Todos mT5-base" si no hay fase2
+          const btnTodosBase = document.querySelector(
+            'button[onclick="seleccionarTodosModelo(\'base\')"]'
+          );
+          if (btnTodosBase) {
+            btnTodosBase.disabled = resultadosFase2.length === 0;
+          }
+
+          const container = document.getElementById('comparacion_documentos');
+          container.innerHTML = resultadosFase1.map((r1, i) => {
+            const r2 = resultadosFase2.find(r => r.nombre === r1.nombre);
+            return `
+            <div class="card mb-3">
+              <div class="card-header"><strong>${r1.nombre}</strong></div>
+              <div class="card-body">
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="form-check mb-2">
+                      <input class="form-check-input" type="radio"
+                             name="modelo_${i}" value="small"
+                             id="small_${i}" checked>
+                      <label class="form-check-label fw-bold"
+                             for="small_${i}">
+                        mT5-small
+                        <span class="badge bg-secondary ms-1">
+                          Perpl: ${r1.perplexidad_small === -1 ? 'N/A' : r1.perplexidad_small}
+                        </span>
+                        <span class="badge bg-secondary ms-1">
+                          ${r1.tiempo_small}s
+                        </span>
+                      </label>
+                    </div>
+                    <p class="text-muted small border rounded p-2">
+                      ${(r1.resumen_small || 'Sin resumen').substring(0, 300)}...
+                    </p>
+                  </div>
+                  <div class="col-md-6">
+                    ${r2 ? `
+                    <div class="form-check mb-2">
+                      <input class="form-check-input" type="radio"
+                             name="modelo_${i}" value="base"
+                             id="base_${i}">
+                      <label class="form-check-label fw-bold"
+                             for="base_${i}">
+                        mT5-base
+                        <span class="badge bg-primary ms-1">
+                          Perpl: ${r2.perplexidad_base === -1 ? 'N/A' : r2.perplexidad_base}
+                        </span>
+                        <span class="badge bg-primary ms-1">
+                          ${r2.tiempo_base}s
+                        </span>
+                      </label>
+                    </div>
+                    <p class="text-muted small border rounded p-2">
+                      ${(r2.resumen_base || 'Sin resumen').substring(0, 300)}...
+                    </p>
+                    ` : `<div class="form-check mb-2">
+                           <input class="form-check-input" type="radio"
+                                  name="modelo_${i}" value="base"
+                                  id="base_${i}" disabled>
+                           <label class="form-check-label text-muted"
+                                  for="base_${i}">
+                             mT5-base <span class="badge bg-secondary">
+                             No procesado</span>
+                           </label>
+                         </div>
+                         <p class="text-muted small border rounded p-2">
+                           Selecciona "Sí, comparar" para ver este resumen.
+                         </p>`}
+                  </div>
+                </div>
+              </div>
+            </div>`;
+          }).join('');
+        }
+
+        function seleccionarTodosModelo(modelo) {
+          resultadosFase1.forEach((_, i) => {
+            const radio = document.getElementById(`${modelo}_${i}`);
+            if (radio) radio.checked = true;
+          });
+        }
+
+        async function indexarSeleccionados() {
+          const index = document.getElementById('select_index').value;
+          const documentos = resultadosFase1.map((r1, i) => {
+            const radio = document.querySelector(
+              `input[name="modelo_${i}"]:checked`
+            );
+            const modeloElegido = radio ? radio.value : 'small';
+            const r2 = resultadosFase2.find(r => r.nombre === r1.nombre);
+            return {
+              documento: r1.documento,
+              resumen_elegido: modeloElegido,
+              resumen_small: r1.resumen_small || '',
+              resumen_base: r2 ? r2.resumen_base : ''
+            };
+          });
+
+          try {
+            const resp = await fetch('/indexar-seleccionados', {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+              body: JSON.stringify({documentos, index})
+            });
+            const data = await resp.json();
+
+            document.getElementById('seccion_comparacion').style.display = 'none';
+            document.getElementById('seccion_resultado_final').style.display = 'block';
+            const msg = document.getElementById('resultado_final_msg');
+            if (data.success) {
+              msg.innerHTML = `<div class="alert alert-success">
+                ✓ ${data.indexados} documento(s) indexado(s) correctamente.
+                ${data.errores ? `${data.errores} error(es).` : ''}
+              </div>`;
+            } else {
+              msg.innerHTML = `<div class="alert alert-danger">
+                Error al indexar: ${data.error || 'Error desconocido'}
+              </div>`;
+            }
+          } catch(e) {
+            alert('Error de conexión: ' + e.message);
+          }
         }
     </script>
 </body>

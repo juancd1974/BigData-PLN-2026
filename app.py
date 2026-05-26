@@ -7,6 +7,8 @@ import subprocess
 from datetime import datetime
 from werkzeug.utils import secure_filename
 from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN
+from Helpers.PLN import pipeline, metrics
+import json
 import requests
 from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException
 import warnings
@@ -604,202 +606,68 @@ def procesar_zip_elastic():
 @app.route('/cargar-documentos-elastic', methods=['POST'])
 def cargar_documentos_elastic():
     """API para cargar documentos a ElasticSearch"""
-    try:
-        if not session.get('logged_in'):
-            return jsonify({'success': False, 'error': 'No autorizado'}), 401
-        
-        permisos = session.get('permisos', {})
-        if not permisos.get('admin_data_elastic'):
-            return jsonify({'success': False, 'error': 'No tiene permisos para cargar datos'}), 403
-        
-        data = request.get_json()
-        archivos = data.get('archivos', [])
-        index = data.get('index')
-        metodo = data.get('metodo', 'zip')
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
 
-        print("\n===== CARGAR DOCUMENTOS ELASTIC =====")
-        print("Archivos recibidos:", len(archivos))
-        print("Índice seleccionado:", index)
-        
-        if not archivos or not index:
-            return jsonify({'success': False, 'error': 'Archivos e índice son requeridos'}), 400
-        
-        documentos = []
-        
-        if metodo == 'zip':
-            # Cargar archivos JSON directamente
-            for archivo in archivos:
-                ruta = archivo.get('ruta')
-                print(f"Procesando archivo JSON: {ruta}")
-                if ruta and os.path.exists(ruta):
-                    doc = Funciones.leer_json(ruta)
-                    print(doc)
-                    if doc:
-                        documentos.append(doc)
-        
-        elif metodo == 'webscraping':
-            # Procesar archivos con PLN
-            
-            # 1. Filtrar archivos nuevos (no duplicados)
-            archivos_filtrados = []
-            
-            for archivo in archivos:
-                # verificar que el archivo exista
-                ruta = archivo.get('ruta')
-                print(f"--- Verificando archivo: {ruta}")
-                if not ruta or not os.path.exists(ruta):
-                    print(f"   ✖ Archivo no encontrado: {ruta}")
-                    continue
+    data = request.get_json()
+    archivos = data.get('archivos', [])
+    index = data.get('index')
+    metodo = data.get('metodo', 'zip')
 
-                # Calcular hash del archivo PDF
-                hash_archivo = Funciones.calcular_hash_archivo(ruta)
-                if not hash_archivo:
-                    print(f"Error calculando hash del archivo {ruta}. Se omite.")
-                    continue
+    if not archivos or not index:
+        return jsonify({'success': False,
+                       'error': 'Archivos e índice son requeridos'}), 400
 
-                # Validar si el hash ya existe en Elastic
-                if elastic.existe_hash(hash_archivo, index):
-                    print(f"Documento ya indexado (hash duplicado): {ruta}")
-                    continue
-                archivo['hash_archivo'] = hash_archivo                  # agregar hash al diccionario del archivo
-                archivos_filtrados.append(archivo)       
-                
-            # Si no hay archivos nuevos, retornar
-            if not archivos_filtrados:
-                print("No hay archivos nuevos para procesar.")
-                return jsonify({'success': True, 'indexados': 0, 'errores': 0})
-            
-            # Cargar PLN (LENTO)
-            pln = PLN(cargar_modelos=True)
+    documentos = []
+    archivos_fallidos = 0
 
-            total_archivos = len(archivos_filtrados)
-            print(f"\nTotal de archivos a procesar con PLN: {total_archivos}")
+    if metodo == 'zip':
+        for archivo in archivos:
+            ruta = archivo.get('ruta')
+            if ruta and os.path.exists(ruta):
+                doc = Funciones.leer_json(ruta)
+                if doc:
+                    documentos.append(doc)
 
-            archivos_fallidos = []
-            for i, archivo in enumerate(archivos_filtrados, start=1):
-                # ----- Extracción de texto -----
-                ruta = archivo.get('ruta')
-                hash_archivo = archivo.get('hash_archivo')
-                print(f"\n--- Procesando archivo [{i} / {total_archivos}]: {ruta} ---")
-                # Extraer texto según tipo de archivo
-                extension = archivo.get('extension', '').lower()
+    elif metodo == 'webscraping':
+        modelo_resumen = pipeline.obtener_modelo_resumen_activo()
+        archivos_nuevos = pipeline.filtrar_archivos_nuevos(
+            archivos, index, elastic
+        )
+        if not archivos_nuevos:
+            return jsonify({'success': True, 'indexados': 0,
+                           'duplicados': len(archivos) - len(archivos_nuevos),
+                           'fallidos': 0})
 
-                texto = ""
-                if extension == 'pdf':
-                    # Intentar extracción normal
-                    texto = Funciones.extraer_texto_pdf(ruta)
-                    if texto and Funciones._calidad_texto(texto):
-                        print(f" → Texto extraído ({len(texto)} chars): ✓")
-                    else:
-                        print(f" → Texto extraído ({len(texto)} chars): calidad baja, intentando OCR...")
-                        
-                        # Si no se extrajo texto suficiente, intentar con OCR
-                        try:
-                            texto = Funciones.extraer_texto_pdf_ocr(ruta)
-                            if texto and len(texto.strip()) >= 50:
-                                print(f" → Texto extraído con OCR (longitud {len(texto)} caracteres): ✓")
-                            else:
-                                print(f" → Texto extraído con OCR (longitud {len(texto)} caracteres): ✗ (insuficiente)")
-                        except Exception as e:
-                            print(f" → Texto extraído con OCR: ✗ (error: {str(e)[:80]})")
-                
-                elif extension == 'txt':
-                    try:
-                        with open(ruta, 'r', encoding='utf-8') as f:
-                            texto = f.read()
-                    except:
-                        try:
-                            with open(ruta, 'r', encoding='latin-1') as f:
-                                texto = f.read()
-                        except:
-                            pass
-                
-                if not texto or len(texto.strip()) < 50:        # si no se extrajo texto suficiente, omitir
-                    archivos_fallidos.append({
-                        'ruta': ruta,
-                        'razon': 'No se extrajo texto suficiente (< 50 caracteres)'
-                    })
-                    continue
-                
-                # ------ Procesar con PLN -------
-                try:
-                    # Procesar con PLN usando chunks
-                    print(" → Procesando texto con PLN (método chunks)...")
-                    resultado_pln = pln.procesar_texto_largo(texto)
-                    print("   → Resumen generado (longitud {} caracteres)".format(len(resultado_pln.get('resumen', ''))))
+        total = len(archivos_nuevos)
+        print(f"\nProcesando {total} archivo(s) con modelo: {modelo_resumen}")
 
-                    temas_pln = resultado_pln.get("temas", [])
+        for i, archivo in enumerate(archivos_nuevos, 1):
+            print(f"\n[{i}/{total}] {archivo.get('nombre', '')}")
+            doc, _ = pipeline.procesar_documento(
+                ruta=archivo['ruta'],
+                nombre=archivo.get('nombre', ''),
+                hash_archivo=archivo['hash_archivo'],
+                pln=pln_busqueda,
+                modelo_resumen=modelo_resumen
+            )
+            if doc:
+                documentos.append(doc)
+            else:
+                archivos_fallidos += 1
 
-                    # Convertir lista de tuplas → lista de objetos
-                    temas_convertidos = [
-                        {"palabra": palabra, "relevancia": float(relevancia)}
-                        for palabra, relevancia in temas_pln
-                    ]
+    if not documentos:
+        return jsonify({'success': True, 'indexados': 0,
+                       'fallidos': archivos_fallidos})
 
-                    # Extraer metadatos normativos
-                    meta = pln.extraer_metadatos_norma(texto, nombre_archivo=archivo.get('nombre', ''))
-
-                    #print("fecha encontrada (raw):", meta.get("fecha_documento"))
-                    fecha_normalizada = pln.normalizar_fecha(meta.get("fecha_documento"))
-                    #print("fecha normalizada:", fecha_normalizada)
-
-                    # Crear documento
-                    documento = {
-                        "tipo_norma": meta.get("tipo_norma"),
-                        "numero_norma": meta.get("numero_norma"),
-                        "anio_norma": meta.get("anio_norma"),
-                        "entidad_emisora": meta.get("entidad_emisora"),
-                        "fecha_documento": fecha_normalizada,
-                        "titulo_norma": meta.get("titulo_norma"),    
-                        'texto': texto[:2_000_000],  # limitar tamaño para Elastic
-                        'resumen': resultado_pln.get('resumen', ''),
-                        'entidades': resultado_pln.get('entidades', {}),
-                        'temas': temas_convertidos,
-                        'ruta': ruta,
-                        'nombre_archivo': archivo.get('nombre', ''),
-                        'hash_archivo': hash_archivo,
-                        'fecha_carga': datetime.now().isoformat()
-                    }
-
-                    documentos.append(documento)      
-                                 
-                
-                except Exception as e:
-                    print(f"Error al procesar {archivo.get('nombre')}: {e}")
-                    continue
-            
-            pln.close()
-        
-        # Si no hay documentos a insertar en elastic, terminar sin error
-        if not documentos:
-            #return jsonify({'success': False, 'error': 'No se pudieron procesar documentos'}), 400
-            print(f"No hay documentos nuevos para procesar (todos duplicados o sin texto).")
-            print(f"Archivos fallidos por extracción: {len(archivos_fallidos)}")
-            for fallo in archivos_fallidos[:5]:  # mostrar primeros 5
-                print(f"  - {fallo['ruta']}: {fallo['razon']}")
-            if len(archivos_fallidos) > 5:
-                print(f"  ... y {len(archivos_fallidos) - 5} más")
-            return jsonify({
-                "success": True, 
-                "indexados": 0, 
-                "duplicados": 0,
-                "fallidos_extraccion": len(archivos_fallidos)
-            }), 200
-        
-        # Indexar documentos en Elastic
-        print(f"\nTotal de documentos a indexar: {len(documentos)}")
-        resultado = elastic.indexar_bulk(index, documentos)
-        print("Resultado de indexación:", resultado)
-        
-        return jsonify({
-            'success': resultado['success'],
-            'indexados': resultado['indexados'],
-            'errores': resultado['fallidos'],
-            'fallidos_extraccion': len(archivos_fallidos)
-        })
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
+    resultado = elastic.indexar_bulk(index, documentos)
+    return jsonify({
+        'success': resultado['success'],
+        'indexados': resultado.get('indexados', 0),
+        'fallidos': resultado.get('fallidos', 0) + archivos_fallidos
+    })
 
 @app.route('/procesar-webscraping-elastic', methods=['POST'])
 def procesar_webscraping_elastic():
@@ -939,66 +807,39 @@ def indexar_carpeta_local():
             yield evento('fin', indexados=0, errores=0, omitidos=0)
             return
 
-        pln = PLN(cargar_modelos=True)
+        modelo_resumen = pipeline.obtener_modelo_resumen_activo()
         indexados = errores = omitidos = 0
 
         for i, nombre in enumerate(archivos_validos, 1):
-            ruta_pdf = os.path.join(ruta, nombre)
+            ruta_archivo = os.path.join(ruta, nombre)
 
             # ── Deduplicación por hash
             yield evento('progreso', archivo=nombre, num=i, total=total, fase='Verificando duplicado')
-            hash_archivo = Funciones.calcular_hash_archivo(ruta_pdf)
+            hash_archivo = Funciones.calcular_hash_archivo(ruta_archivo)
             if elastic.existe_hash(hash_archivo, index):
                 omitidos += 1
                 yield evento('omitido', archivo=nombre, num=i, total=total)
                 continue
 
-            # ── Extracción de texto
-            yield evento('progreso', archivo=nombre, num=i, total=total, fase='Extrayendo texto')
-            texto = Funciones.extraer_texto_pdf(ruta_pdf)
-            if not texto or not Funciones._calidad_texto(texto):
-                yield evento('progreso', archivo=nombre, num=i, total=total, fase='Intentando OCR')
-                try:
-                    texto = Funciones.extraer_texto_pdf_ocr(ruta_pdf)
-                except Exception:
-                    texto = ''
-
-            if not texto or len(texto.strip()) < 50:
-                errores += 1
-                yield evento('error', archivo=nombre, num=i, total=total, razon='Sin texto extraíble')
-                continue
-
-            # ── PLN
-            n_segmentos = max(1, len(texto) // 3000)
-            yield evento('progreso', archivo=nombre, num=i, total=total,
-                         fase=f'Procesando con PLN ({n_segmentos} segmento(s) ~{n_segmentos * 30}–{n_segmentos * 60}s)')
+            # ── Pipeline PLN
+            yield evento('progreso', archivo=nombre, num=i, total=total, fase='Procesando con PLN')
             try:
-                resultado_pln = pln.procesar_texto_largo(texto)
-                meta          = pln.extraer_metadatos_norma(texto, nombre_archivo=nombre)
-                fecha_norm    = pln.normalizar_fecha(meta.get('fecha_documento'))
-                temas_conv    = [{'palabra': p, 'relevancia': float(r)}
-                                 for p, r in resultado_pln.get('temas', [])]
+                doc, _ = pipeline.procesar_documento(
+                    ruta=ruta_archivo,
+                    nombre=nombre,
+                    hash_archivo=hash_archivo,
+                    pln=pln_busqueda,
+                    modelo_resumen=modelo_resumen
+                )
 
-                documento = {
-                    'tipo_norma':      meta.get('tipo_norma'),
-                    'numero_norma':    meta.get('numero_norma'),
-                    'anio_norma':      meta.get('anio_norma'),
-                    'entidad_emisora': meta.get('entidad_emisora'),
-                    'fecha_documento': fecha_norm,
-                    'titulo_norma':    meta.get('titulo_norma'),
-                    'texto':           texto[:2_000_000],
-                    'resumen':         resultado_pln.get('resumen', ''),
-                    'entidades':       resultado_pln.get('entidades', {}),
-                    'temas':           temas_conv,
-                    'ruta':            ruta_pdf,
-                    'nombre_archivo':  nombre,
-                    'hash_archivo':    hash_archivo,
-                    'fecha_carga':     datetime.now().isoformat()
-                }
+                if doc is None:
+                    errores += 1
+                    yield evento('error', archivo=nombre, num=i, total=total, razon='Sin texto extraíble')
+                    continue
 
                 # ── Indexar
                 yield evento('progreso', archivo=nombre, num=i, total=total, fase='Indexando en Elastic')
-                res = elastic.indexar_bulk(index, [documento])
+                res = elastic.indexar_bulk(index, [doc])
                 if res['success']:
                     indexados += 1
                     yield evento('ok', archivo=nombre, num=i, total=total)
@@ -1010,7 +851,6 @@ def indexar_carpeta_local():
                 errores += 1
                 yield evento('error', archivo=nombre, num=i, total=total, razon=str(e)[:120])
 
-        pln.close()
         yield evento('fin', indexados=indexados, errores=errores, omitidos=omitidos)
 
     return Response(generate(), mimetype='text/event-stream',
@@ -1036,6 +876,185 @@ def admin():
                            version=VERSION_APP, creador=CREATOR_APP)
 
 
+
+
+@app.route('/configuracion')
+def configuracion():
+    """Página de configuración de modelos PLN"""
+    config = pipeline.cargar_config_modelos()
+    return render_template('configuracion.html', config=config,
+                           version=VERSION_APP, creador=CREATOR_APP)
+
+
+@app.route('/configuracion/guardar', methods=['POST'])
+def guardar_configuracion():
+    """API para actualizar el modelo de resumen activo"""
+    data = request.get_json()
+    summarizer_activo = data.get('summarizer_activo')
+
+    config = pipeline.cargar_config_modelos()
+    modelo_anterior = config.get('configuracion_activa', {}).get('summarizer_activo')
+    config['configuracion_activa']['summarizer_activo'] = summarizer_activo
+
+    modelo_hf = next(
+        (m.get('modelo_hf', 'google/mt5-small') for m in config.get('summarizer', [])
+         if m.get('id') == summarizer_activo),
+        'google/mt5-small'
+    )
+
+    with open('config/models_config.json', 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+
+    if modelo_anterior != summarizer_activo:
+        pipeline.liberar_modelo_resumen(pln_busqueda)
+
+    return jsonify({'success': True, 'modelo_activo': modelo_hf})
+
+
+@app.route('/metricas')
+def metricas_vista():
+    """Panel de métricas operacionales del pipeline PLN"""
+    resumen = metrics.calcular_resumen_comparativo()
+    todas = metrics.cargar_todas_las_metricas()
+    return render_template('metricas.html', resumen=resumen, metricas=todas,
+                           version=VERSION_APP, creador=CREATOR_APP)
+
+
+@app.route('/metricas/datos')
+def metricas_datos():
+    """API JSON con el resumen comparativo de métricas para consumo desde JavaScript"""
+    return jsonify(metrics.calcular_resumen_comparativo())
+
+
+@app.route('/procesar-fase1', methods=['POST'])
+def procesar_fase1():
+    """API que ejecuta la fase 1 del pipeline (extracción + NER + resumen mT5-small)."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+
+    data     = request.get_json()
+    archivos = data.get('archivos', [])
+    index    = data.get('index', '')
+
+    if not archivos or not index:
+        return jsonify({'success': False, 'error': 'Archivos e índice son requeridos'}), 400
+
+    resultados    = []
+    tiempos_fase1 = []
+
+    for archivo in archivos:
+        ruta         = archivo.get('ruta', '')
+        nombre       = archivo.get('nombre', '')
+        hash_archivo = archivo.get('hash_archivo') or \
+                       Funciones.calcular_hash_archivo(ruta)
+
+        doc, metricas_doc = pipeline.procesar_fase1(ruta, nombre, hash_archivo, pln_busqueda)
+
+        resumen_small     = doc.get('resumen', '')         if doc else ''
+        perplexidad_small = (metricas_doc.get('resumen') or {}).get('perplexidad')
+        tiempo_small      = (metricas_doc.get('resumen') or {}).get('tiempo_segundos')
+        completitud       = (metricas_doc.get('metadatos') or {}).get('completitud_porcentaje')
+
+        if tiempo_small is not None:
+            tiempos_fase1.append(tiempo_small)
+
+        resultados.append({
+            'nombre':                nombre,
+            'hash_archivo':          hash_archivo,
+            'resumen_small':         resumen_small,
+            'perplexidad_small':     perplexidad_small,
+            'tiempo_small':          tiempo_small,
+            'completitud_metadatos': completitud,
+            'documento':             doc,
+        })
+
+    tiempo_promedio = (sum(tiempos_fase1) / len(tiempos_fase1)) if tiempos_fase1 else 0
+    estimacion = pipeline.estimar_tiempo_fase2(len(resultados), tiempo_promedio)
+
+    return jsonify({'success': True, 'resultados': resultados, 'estimacion_fase2': estimacion})
+
+
+@app.route('/procesar-fase2', methods=['POST'])
+def procesar_fase2():
+    """API que ejecuta la fase 2 del pipeline (resumen con mT5-base)."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+
+    data     = request.get_json()
+    archivos = data.get('archivos', [])
+
+    if not archivos:
+        return jsonify({'success': False, 'error': 'Archivos son requeridos'}), 400
+
+    resultados = []
+
+    for archivo in archivos:
+        nombre       = archivo.get('nombre', '')
+        hash_archivo = archivo.get('hash_archivo', '')
+
+        texto = Funciones.cargar_texto_temporal(hash_archivo)
+        if not texto:
+            continue
+
+        resumen_base, metricas_doc = pipeline.procesar_fase2(
+            texto, nombre, hash_archivo, pln_busqueda
+        )
+
+        resultados.append({
+            'nombre':           nombre,
+            'hash_archivo':     hash_archivo,
+            'resumen_base':     resumen_base,
+            'perplexidad_base': (metricas_doc.get('resumen') or {}).get('perplexidad'),
+            'tiempo_base':      (metricas_doc.get('resumen') or {}).get('tiempo_segundos'),
+        })
+
+    return jsonify({'success': True, 'resultados': resultados})
+
+
+@app.route('/indexar-seleccionados', methods=['POST'])
+def indexar_seleccionados():
+    """API que indexa documentos usando el resumen elegido (small o base)."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+
+    data       = request.get_json()
+    documentos = data.get('documentos', [])
+    index      = data.get('index', '')
+
+    if not documentos or not index:
+        return jsonify({'success': False, 'error': 'Documentos e índice son requeridos'}), 400
+
+    _MODELO_HF = {'small': 'google/mt5-small', 'base': 'google/mt5-base'}
+    docs_a_indexar = []
+
+    for item in documentos:
+        doc           = item.get('documento') or {}
+        eleccion      = item.get('resumen_elegido', 'small')
+        resumen_small = item.get('resumen_small', '')
+        resumen_base  = item.get('resumen_base', '')
+
+        doc['resumen']        = resumen_base if eleccion == 'base' else resumen_small
+        doc['modelo_resumen'] = _MODELO_HF.get(eleccion, 'google/mt5-small')
+        docs_a_indexar.append(doc)
+
+    resultado = elastic.indexar_bulk(index, docs_a_indexar)
+
+    for doc_data in documentos:
+        hash_a = (doc_data.get('documento') or {}).get('hash_archivo')
+        if hash_a:
+            Funciones.eliminar_texto_temporal(hash_a)
+
+    return jsonify({
+        'success':   resultado.get('success', False),
+        'indexados': resultado.get('indexados', 0),
+        'errores':   resultado.get('fallidos', 0),
+    })
 
 
 # ==================== MAIN ====================

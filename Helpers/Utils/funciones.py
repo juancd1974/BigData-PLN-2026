@@ -7,7 +7,8 @@ import fitz
 from collections import Counter
 from PIL import Image
 import pytesseract
-from typing import Dict, List
+import time
+from typing import Dict, List, Optional, Tuple
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import hashlib
@@ -15,9 +16,11 @@ import hashlib
 MESES_ES = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
     "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
-    "septiembre": 9, "setiembre": 9,  
+    "septiembre": 9, "setiembre": 9,
     "octubre": 10, "noviembre": 11, "diciembre": 12
 }
+
+TEMP_DIR = 'static/temp'
 
 class Funciones:
     @staticmethod
@@ -321,3 +324,119 @@ class Funciones:
         except Exception as e:
             print(f"Error calculando hash del archivo {ruta_archivo}: {e}")
             return None
+
+    @staticmethod
+    def extraer_texto_pdf_con_metricas(ruta_pdf: str) -> Tuple[str, Dict]:
+        """
+        Extrae texto de un PDF y retorna métricas del proceso.
+
+        Intenta primero con PyMuPDF. Si la calidad es insuficiente,
+        activa OCR con Tesseract como fallback.
+
+        Args:
+            ruta_pdf: Ruta del archivo PDF a procesar.
+
+        Returns:
+            Tupla (texto, metricas). metricas contiene metodo,
+            tiempo_segundos, longitud_caracteres y calidad_ok.
+            Si ambos métodos fallan retorna ("", metricas) con
+            calidad_ok=False y longitud_caracteres=0.
+        """
+        inicio = time.time()
+
+        texto = Funciones.extraer_texto_pdf(ruta_pdf)
+        if texto and Funciones._calidad_texto(texto):
+            metricas = {
+                "metodo": "pymupdf",
+                "tiempo_segundos": round(time.time() - inicio, 3),
+                "longitud_caracteres": len(texto),
+                "calidad_ok": True,
+            }
+            return texto, metricas
+
+        texto = Funciones.extraer_texto_pdf_ocr(ruta_pdf)
+        calidad_ok = len(texto.strip()) >= 50
+        metricas = {
+            "metodo": "ocr",
+            "tiempo_segundos": round(time.time() - inicio, 3),
+            "longitud_caracteres": len(texto),
+            "calidad_ok": calidad_ok,
+        }
+        return texto, metricas
+
+    @staticmethod
+    def guardar_texto_temporal(hash_archivo: str, nombre_archivo: str,
+                               texto: str) -> Optional[str]:
+        """
+        Guarda el texto extraído de un PDF en un JSON temporal en static/temp/.
+
+        Args:
+            hash_archivo:   Hash SHA-256 con prefijo "sha256:".
+            nombre_archivo: Nombre del archivo PDF fuente.
+            texto:          Texto extraído del documento.
+
+        Returns:
+            Ruta del archivo guardado, o None si falló.
+        """
+        try:
+            Funciones.crear_carpeta(TEMP_DIR)
+            hash_limpio = hash_archivo.replace("sha256:", "")
+            ruta = os.path.join(TEMP_DIR, f"{hash_limpio}.json")
+            datos = {
+                "nombre_archivo": nombre_archivo,
+                "hash_archivo": hash_archivo,
+                "texto": texto,
+                "fecha_extraccion": datetime.now().isoformat(),
+            }
+            with open(ruta, 'w', encoding='utf-8') as f:
+                json.dump(datos, f, indent=4, ensure_ascii=False)
+            return ruta
+        except Exception as e:
+            print(f"Error al guardar texto temporal: {e}")
+            return None
+
+    @staticmethod
+    def cargar_texto_temporal(hash_archivo: str) -> Optional[str]:
+        """
+        Carga el texto desde el JSON temporal correspondiente al hash.
+
+        Args:
+            hash_archivo: Hash SHA-256 con prefijo "sha256:".
+
+        Returns:
+            Texto como string, o None si el archivo no existe o no se puede leer.
+        """
+        try:
+            hash_limpio = hash_archivo.replace("sha256:", "")
+            ruta = os.path.join(TEMP_DIR, f"{hash_limpio}.json")
+            if not os.path.exists(ruta):
+                return None
+            with open(ruta, 'r', encoding='utf-8') as f:
+                datos = json.load(f)
+            return datos.get("texto")
+        except Exception as e:
+            print(f"Error al cargar texto temporal: {e}")
+            return None
+
+    @staticmethod
+    def eliminar_texto_temporal(hash_archivo: str) -> bool:
+        """
+        Elimina el JSON temporal correspondiente al hash.
+
+        Args:
+            hash_archivo: Hash SHA-256 con prefijo "sha256:".
+
+        Returns:
+            True si se eliminó correctamente o el archivo no existía,
+            False si hubo un error al eliminar.
+        """
+        try:
+            hash_limpio = hash_archivo.replace("sha256:", "")
+            ruta = os.path.join(TEMP_DIR, f"{hash_limpio}.json")
+            if not os.path.exists(ruta):
+                return True
+            os.remove(ruta)
+            return True
+        except Exception as e:
+            print(f"Error al eliminar texto temporal: {e}")
+            return False
