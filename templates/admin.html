@@ -29,18 +29,17 @@
         <p class="text-center mb-4">Bienvenido al panel de administración. Aquí puedes gestionar usuarios, cargar documentos al corpus y administrar los índices de búsqueda.</p>
         <div class="row g-3 mt-2">
             <div class="col-md-4">
-            {% if permisos and permisos.get('admin_usuarios') %}
-                <a href="/gestor_usuarios" class="btn btn-primary boton_buscar w-100 py-3">Gestionar Usuarios</a>
-            {% else %}
-                <div class="alert alert-warning text-center mb-0">Sin permiso (admin_usuarios)</div>
-            {% endif %}
-            </div>
-            <div class="col-md-4">
             {% if permisos and permisos.get('admin_data_elastic') %}
                 <a href="/cargar_doc_elastic" class="btn btn-primary boton_buscar w-100 py-3">Cargar Documentos</a>
             {% else %}
                 <div class="alert alert-warning text-center mb-0">Sin permiso (admin_data_elastic)</div>
             {% endif %}
+            </div>
+            <div class="col-md-4">
+                <a href="/metricas" class="btn btn-primary boton_buscar w-100 py-3">Panel de Métricas</a>
+            </div>
+            <div class="col-md-4">
+                <button class="btn btn-secondary w-100 py-3" disabled>Próximamente</button>
             </div>
             <div class="col-md-4">
             {% if permisos and permisos.get('admin_elastic') %}
@@ -50,10 +49,14 @@
             {% endif %}
             </div>
             <div class="col-md-4">
-                <a href="/configuracion" class="btn btn-primary boton_buscar w-100 py-3">Configuración de Modelos</a>
+            {% if permisos and permisos.get('admin_usuarios') %}
+                <a href="/gestor_usuarios" class="btn btn-primary boton_buscar w-100 py-3">Gestionar Usuarios</a>
+            {% else %}
+                <div class="alert alert-warning text-center mb-0">Sin permiso (admin_usuarios)</div>
+            {% endif %}
             </div>
             <div class="col-md-4">
-                <a href="/metricas" class="btn btn-primary boton_buscar w-100 py-3">Panel de Métricas</a>
+                <a href="/configuracion" class="btn btn-primary boton_buscar w-100 py-3">Configuración</a>
             </div>
         </div>
     </div>

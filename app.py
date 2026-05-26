@@ -415,6 +415,10 @@ def actualizar_usuario():
             if usuario_duplicado:
                 return jsonify({'success': False, 'error': 'Ya existe otro usuario con ese nombre'}), 400
         
+        # Si password viene vacío, no sobreescribir el hash existente
+        if not datos_usuario.get('password'):
+            datos_usuario.pop('password', None)
+
         # Actualizar usuario
         resultado = mongo.actualizar_usuario(usuario_original, datos_usuario, MONGO_COLECCION)
         

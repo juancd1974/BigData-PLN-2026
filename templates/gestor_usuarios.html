@@ -41,7 +41,6 @@
                 <thead class="table-dark">
                     <tr>
                         <th>Usuario</th>
-                        <th>Password</th>
                         <th>Login</th>
                         <th>Admin Usuarios</th>
                         <th>Admin Elastic</th>
@@ -51,7 +50,7 @@
                 </thead>
                 <tbody id="tablaUsuarios">
                     <tr>
-                        <td colspan="7" class="text-center">Cargando usuarios...</td>
+                        <td colspan="6" class="text-center">Cargando usuarios...</td>
                     </tr>
                 </tbody>
             </table>
@@ -131,6 +130,7 @@
                         <div class="mb-3">
                             <label for="editar_password" class="form-label">Password</label>
                             <input type="password" class="form-control" id="editar_password" name="password" required>
+                            <small class="text-muted">Dejar vacío para mantener la contraseña actual.</small>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Permisos</label>
@@ -186,7 +186,7 @@
                     tablaUsuarios.innerHTML = '';
                     
                     if (data.length === 0) {
-                        tablaUsuarios.innerHTML = '<tr><td colspan="7" class="text-center">No hay usuarios registrados</td></tr>';
+                        tablaUsuarios.innerHTML = '<tr><td colspan="6" class="text-center">No hay usuarios registrados</td></tr>';
                     } else {
                         data.forEach(usuario => {
                             const row = document.createElement('tr');
@@ -202,7 +202,6 @@
                             
                             row.innerHTML = `
                                 <td>${usuario.usuario || ''}</td>
-                                <td>${usuario.password || ''}</td>
                                 <td>${mostrarPermiso(permisos.login)}</td>
                                 <td>${mostrarPermiso(permisos.admin_usuarios)}</td>
                                 <td>${mostrarPermiso(permisos.admin_elastic)}</td>
@@ -310,7 +309,7 @@
                         // Llenar formulario con datos del usuario
                         document.getElementById('editar_usuario_original').value = usuarioData.usuario;
                         document.getElementById('editar_usuario').value = usuarioData.usuario;
-                        document.getElementById('editar_password').value = usuarioData.password || '';
+                        document.getElementById('editar_password').value = '';
                         
                         // Marcar checkboxes de permisos
                         const permisos = usuarioData.permisos || {};

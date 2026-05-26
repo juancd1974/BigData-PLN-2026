@@ -41,7 +41,12 @@ _RE_NUMERO_NORMA = re.compile(
 )
 
 _RE_ANIO   = re.compile(r'\b(19\d{2}|20\d{2})\b')
-_RE_TITULO = re.compile(r'^por\s+(el|la)\s+cu[aáo][ls]?\b', re.IGNORECASE)
+_RE_TITULO = re.compile(
+    r'^por\s+'
+    r'(?:el\s+cual|la\s+cual|medio\s+de\s+la\s+cual|medio\s+del\s+cual'
+    r'|el\s+que|la\s+que|el\s+presente|la\s+presente)',
+    re.IGNORECASE,
+)
 _RE_FECHA_MES_ANIO = re.compile(
     r'\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre'
     r'|octubre|noviembre|diciembre)\s+(?:de\s+|del\s+)?(\d{4})\b',
@@ -52,8 +57,21 @@ _ENTIDAD_POR_TIPO = {
     'CONPES': 'CONSEJO NACIONAL DE POLÍTICA ECONÓMICA Y SOCIAL',
 }
 _RE_NOMBRE_ARCHIVO = re.compile(
-    r'(CONPES|DECRETO[\s_]*LEGISLATIVO|DECRETO|RESOLUCI[OÓ]N|LEY|CIRCULAR|ACUERDO|DIRECTIVA|ORDENANZA)'
-    r'[_\s]+(\d{2,5})[_\s]+DE[_\s]+(\d{4})',
+    r'(CONPES|DECRETO[\s_]*LEGISLATIVO|DECRETO|RESOLUCI[OÓ]N'
+    r'|LEY|CIRCULAR|ACUERDO|DIRECTIVA|ORDENANZA)'
+    r'[\s_]+(?:N[oO°]?\.?|N[uú]m\.?)?[\s_]*'
+    r'(\d{2,6})'
+    r'[\s_]+DEL?[\s_]+'
+    r'(?:\d{1,2}[\s_]+DE[\s_]+\w+[\s_]+DE[\s_]+)?'
+    r'(\d{4})',
+    re.IGNORECASE,
+)
+
+_RE_FECHA_EN_NOMBRE = re.compile(
+    r'(\d{1,2})[\s_]+DE[\s_]+'
+    r'(ENERO|FEBRERO|MARZO|ABRIL|MAYO|JUNIO|JULIO|AGOSTO'
+    r'|SEPTIEMBRE|OCTUBRE|NOVIEMBRE|DICIEMBRE)'
+    r'[\s_]+DE[\s_]+(\d{4})',
     re.IGNORECASE,
 )
 
@@ -205,17 +223,22 @@ def extraer_metadatos_norma(nlp: Any, texto: str, nombre_archivo: str = '') -> D
     """
     Extrae metadatos estructurados del encabezado de una norma colombiana.
 
-    Estrategia combinada:
-      1. NER spaCy sobre las primeras 20 líneas (MAYÚSCULAS) → entidad emisora (ORG)
-      2. Regex + dateparser sobre texto original → fecha del documento
-      3. Búsqueda de palabras clave en el encabezado → tipo de norma
-      4. Regex de número de norma con variantes de notación
-      5. Fallback de año si no hay fecha completa
-      6. Patrón "Por el/la cual…" en primeras 30 líneas → título
+    Estrategia por prioridad:
+      1. Nombre de archivo (fuente primaria — más fiable en PDFs con codificación compleja):
+           _RE_NOMBRE_ARCHIVO → tipo_norma, numero_norma, anio_norma
+           _RE_FECHA_EN_NOMBRE → fecha_documento, anio_norma
+      2. Texto del documento (fallback para campos aún en None):
+           _RE_FECHA_LARGA / _RE_FECHA_MES_ANIO → fecha_documento
+           _TIPOS_NORMA → tipo_norma
+           _RE_NUMERO_NORMA → numero_norma
+           _RE_ANIO → anio_norma
+      3. NER spaCy sobre primeras 20 líneas → entidad_emisora (siempre desde texto)
+      4. Patrón "Por el/la cual…" en primeras 30 líneas → titulo_norma
 
     Args:
-        nlp:   Modelo spaCy cargado.
-        texto: Texto completo de la norma (sin preprocesar).
+        nlp:            Modelo spaCy cargado.
+        texto:          Texto completo de la norma (sin preprocesar).
+        nombre_archivo: Nombre del archivo fuente (opcional, mejora extracción).
 
     Returns:
         Dict con claves: tipo_norma, numero_norma, anio_norma,
@@ -233,16 +256,62 @@ def extraer_metadatos_norma(nlp: Any, texto: str, nombre_archivo: str = '') -> D
         'entidad_emisora': None, 'fecha_documento': None, 'titulo_norma': None,
     }
 
-    # Nombre de archivo como fuente primaria de tipo/número/año (más fiable que texto en PDFs con codificación compleja)
+    # PASO 1 — Nombre de archivo (fuente prioritaria)
     if nombre_archivo:
-        m = _RE_NOMBRE_ARCHIVO.match(os.path.splitext(nombre_archivo)[0])
+        nombre_sin_ext = os.path.splitext(nombre_archivo)[0]
+        m = _RE_NOMBRE_ARCHIVO.match(nombre_sin_ext)
         if m:
             tipo_raw = m.group(1).upper()
             meta['tipo_norma']   = 'RESOLUCIÓN' if 'RESOLUCI' in tipo_raw else tipo_raw
             meta['numero_norma'] = int(m.group(2))
             meta['anio_norma']   = int(m.group(3))
+        m_fecha = _RE_FECHA_EN_NOMBRE.search(nombre_sin_ext)
+        if m_fecha:
+            fecha_str = f"{m_fecha.group(1)} de {m_fecha.group(2)} de {m_fecha.group(3)}"
+            fecha_norm = normalizar_fecha(fecha_str)
+            if fecha_norm:
+                meta['fecha_documento'] = fecha_norm
+                meta['anio_norma']      = int(m_fecha.group(3))
 
-    # NER sobre texto original (sin uppercase) — mejor sensibilidad del modelo para entidades
+    # PASO 2 — Texto (fallback solo para campos aún en None)
+    if not meta['fecha_documento']:
+        m = _RE_FECHA_LARGA.search(texto)
+        if m:
+            fecha = normalizar_fecha(m.group(1))
+            if fecha:
+                meta['fecha_documento'] = fecha
+                meta['anio_norma']      = int(fecha[:4])
+
+    if not meta['fecha_documento']:
+        m = _RE_FECHA_MES_ANIO.search(texto)
+        if m:
+            fecha = normalizar_fecha(f"1 de {m.group(1)} de {m.group(2)}")
+            if fecha:
+                meta['fecha_documento'] = fecha
+                meta['anio_norma']      = int(m.group(2))
+
+    # _TIPOS_NORMA está ordenado: "DECRETO LEGISLATIVO" antes de "DECRETO"
+    if not meta['tipo_norma']:
+        for tipo in _TIPOS_NORMA:
+            if tipo in encabezado:
+                meta['tipo_norma'] = 'RESOLUCIÓN' if tipo == 'RESOLUCION' else tipo
+                break
+
+    if not meta['numero_norma']:
+        m = _RE_NUMERO_NORMA.search(encabezado)
+        if m:
+            meta['numero_norma'] = int(m.group(2))
+        else:
+            m = re.search(r'\b(\d{2,5})\b', encabezado)
+            if m:
+                meta['numero_norma'] = int(m.group(1))
+
+    if not meta['anio_norma']:
+        m = _RE_ANIO.search(encabezado)
+        if m:
+            meta['anio_norma'] = int(m.group(1))
+
+    # PASO 3 — Entidad emisora (siempre desde texto, no está en el nombre)
     mejor_org = None
     for ent in nlp(encabezado_original).ents:
         if ent.label_ == 'ORG':
@@ -256,42 +325,8 @@ def extraer_metadatos_norma(nlp: Any, texto: str, nombre_archivo: str = '') -> D
     if not meta['entidad_emisora'] and meta.get('tipo_norma') in _ENTIDAD_POR_TIPO:
         meta['entidad_emisora'] = _ENTIDAD_POR_TIPO[meta['tipo_norma']]
 
-    # Buscar fecha en texto ORIGINAL: dateparser es sensible a mayúsculas en meses
-    m = _RE_FECHA_LARGA.search(texto)
-    if m:
-        fecha = normalizar_fecha(m.group(1))
-        if fecha:
-            meta['fecha_documento'] = fecha
-            meta['anio_norma']      = int(fecha[:4])
-
-    if not meta['fecha_documento']:
-        m = _RE_FECHA_MES_ANIO.search(texto)
-        if m:
-            fecha = normalizar_fecha(f"1 de {m.group(1)} de {m.group(2)}")
-            if fecha:
-                meta['fecha_documento'] = fecha
-                meta['anio_norma']      = int(m.group(2))
-
-    # _TIPOS_NORMA está ordenado: "DECRETO LEGISLATIVO" antes de "DECRETO"
-    for tipo in _TIPOS_NORMA:
-        if tipo in encabezado:
-            meta['tipo_norma'] = 'RESOLUCIÓN' if tipo == 'RESOLUCION' else tipo
-            break
-
-    m = _RE_NUMERO_NORMA.search(encabezado)
-    if m:
-        meta['numero_norma'] = int(m.group(2))
-    else:
-        m = re.search(r'\b(\d{2,5})\b', encabezado)
-        if m:
-            meta['numero_norma'] = int(m.group(1))
-
-    if not meta['anio_norma']:
-        m = _RE_ANIO.search(encabezado)
-        if m:
-            meta['anio_norma'] = int(m.group(1))
-
-    for linea in lineas[:30]:
+    # PASO 4 — Título (siempre desde texto)
+    for linea in lineas[:50]:
         if _RE_TITULO.match(linea.strip()):
             meta['titulo_norma'] = linea.strip()
             break

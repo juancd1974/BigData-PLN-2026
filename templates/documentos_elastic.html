@@ -317,6 +317,7 @@
         // ── Estado global ────────────────────────────────────────────────────────────
         let archivosActuales = [];
         let metodoActual = 'carpeta';
+        let procesandoActivo = false;
 
         // ── Inicialización ───────────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', () => {
@@ -330,6 +331,12 @@
                     document.getElementById('seccion_resultados').style.display  = 'none';
                     document.getElementById('seccion_progreso').style.display    = 'none';
                 });
+            });
+            window.addEventListener('beforeunload', function(e) {
+                if (procesandoActivo) {
+                    e.preventDefault();
+                    e.returnValue = '';
+                }
             });
         });
 
@@ -430,6 +437,7 @@
             const params    = new URLSearchParams({ ruta: data.ruta, index,
                                  archivos: data.archivos.map(a => a.nombre).join('|') });
             const evtSource = new EventSource(`/indexar-carpeta-local?${params}`);
+            setProcesando(true);
 
             document.getElementById('seccion_progreso').style.display = 'block';
             document.getElementById('log_progreso').innerHTML = '';
@@ -463,6 +471,7 @@
                 } else if (d.tipo === 'fin') {
                     evtSource.close();
                     document.getElementById('btn_cargar').disabled = false;
+                    setProcesando(false);
                     logLinea(`─────────────────────────────────────────────`, '');
                     logLinea(
                         `Completado: ${d.indexados} indexados · ${d.omitidos} omitidos · ${d.errores} errores`,
@@ -475,6 +484,7 @@
             evtSource.onerror = function () {
                 evtSource.close();
                 document.getElementById('btn_cargar').disabled = false;
+                setProcesando(false);
                 logLinea('✗ Conexión interrumpida', 'log-error');
             };
         }
@@ -577,6 +587,25 @@
             log.scrollTop = log.scrollHeight;
         }
 
+        function setProcesando(activo) {
+            procesandoActivo = activo;
+            document.querySelectorAll('.nav-link').forEach(a => {
+                if (activo) {
+                    a.dataset.href = a.href;
+                    a.removeAttribute('href');
+                    a.style.opacity = '0.5';
+                    a.style.cursor = 'not-allowed';
+                } else {
+                    if (a.dataset.href) {
+                        a.href = a.dataset.href;
+                        delete a.dataset.href;
+                    }
+                    a.style.opacity = '';
+                    a.style.cursor = '';
+                }
+            });
+        }
+
         // ── Helpers spinner ──────────────────────────────────────────────────────────
         function mostrarCargando(msg) {
             document.getElementById('mensaje_cargando').textContent = msg;
@@ -652,6 +681,7 @@
             index: index
           });
 
+          setProcesando(true);
           return new Promise((resolve) => {
             const es = new EventSource('/procesar-fase1?' + params.toString());
 
@@ -684,6 +714,7 @@
                   mostrarResultadosFase1(resultado.resultados,
                                           resultado.estimacion_fase2);
                 }
+                setProcesando(false);
                 resolve(resultado);
                 return;
               }
@@ -702,6 +733,7 @@
 
             es.onerror = function() {
               es.close();
+              setProcesando(false);
               logLinea('Error de conexión con el servidor.', 'log-error');
               resolve({success: false});
             };
@@ -747,6 +779,7 @@
             archivos: JSON.stringify(archivos)
           });
 
+          setProcesando(true);
           return new Promise((resolve) => {
             const es = new EventSource('/procesar-fase2?' + params.toString());
 
@@ -758,6 +791,7 @@
                 const resultado = JSON.parse(data.mensaje);
                 resultadosFase2 = resultado.resultados || [];
                 logFase2('✓ Completado', 'log-ok');
+                setProcesando(false);
                 setTimeout(() => mostrarComparacion(), 1000);
                 resolve(resultado);
                 return;
@@ -775,6 +809,7 @@
 
             es.onerror = function() {
               es.close();
+              setProcesando(false);
               logFase2('Error de conexión.', 'log-error');
               resolve({success: false});
             };
@@ -891,12 +926,14 @@
           });
 
           try {
+            setProcesando(true);
             const resp = await fetch('/indexar-seleccionados', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({documentos, index})
             });
             const data = await resp.json();
+            setProcesando(false);
 
             document.getElementById('seccion_comparacion').style.display = 'none';
             document.getElementById('seccion_resultado_final').style.display = 'block';
@@ -922,6 +959,7 @@
               </div>`;
             }
           } catch(e) {
+            setProcesando(false);
             alert('Error de conexión: ' + e.message);
           }
         }

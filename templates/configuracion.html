@@ -158,7 +158,25 @@
             integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
             crossorigin="anonymous"></script>
     <script>
+        const modeloFase1Actual = "{{ modelo_fase1 }}";
+        const modeloFase2Actual = "{{ modelo_fase2 }}";
+
+        function mostrarAlerta(mensaje, tipo) {
+            const alerta = document.getElementById('alerta');
+            alerta.className = `alert alert-${tipo} mb-4`;
+            alerta.textContent = mensaje;
+            alerta.classList.remove('d-none');
+        }
+
         function guardarCampo(campo, valor) {
+            if (campo === 'modelo_fase1' && valor === modeloFase2Actual) {
+                mostrarAlerta('El modelo de Fase 1 no puede ser igual al de Fase 2.', 'danger');
+                return;
+            }
+            if (campo === 'modelo_fase2' && valor === modeloFase1Actual) {
+                mostrarAlerta('El modelo de Fase 2 no puede ser igual al de Fase 1.', 'danger');
+                return;
+            }
             if (campo === 'modo_comparacion') {
                 document.getElementById('seccion_fase2').style.display =
                     valor ? 'block' : 'none';
@@ -170,23 +188,15 @@
             })
             .then(r => r.json())
             .then(data => {
-                const alerta = document.getElementById('alerta');
                 if (data.success) {
-                    alerta.className = 'alert alert-success mb-4';
-                    alerta.textContent = 'Configuración guardada correctamente. Recargando...';
-                    alerta.classList.remove('d-none');
+                    mostrarAlerta('Configuración guardada correctamente. Recargando...', 'success');
                     setTimeout(() => location.reload(), 1500);
                 } else {
-                    alerta.className = 'alert alert-danger mb-4';
-                    alerta.textContent = 'Error al guardar la configuración.';
-                    alerta.classList.remove('d-none');
+                    mostrarAlerta('Error al guardar la configuración.', 'danger');
                 }
             })
             .catch(() => {
-                const alerta = document.getElementById('alerta');
-                alerta.className = 'alert alert-danger mb-4';
-                alerta.textContent = 'Error de conexión al guardar la configuración.';
-                alerta.classList.remove('d-none');
+                mostrarAlerta('Error de conexión al guardar la configuración.', 'danger');
             });
         }
     </script>
