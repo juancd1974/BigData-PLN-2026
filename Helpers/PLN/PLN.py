@@ -15,7 +15,7 @@ ni persistencia — esas responsabilidades pertenecen a pipeline.py.
 """
 
 import spacy
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from Helpers.PLN.text_preprocessing import (
     preprocesar_texto as _prep_texto,
@@ -27,8 +27,6 @@ from Helpers.PLN.entity_extractor import (
     extraer_temas as _extraer_temas,
     extraer_entidades_mejorado as _extraer_entidades,
     extraer_metadatos_mejorado as _extraer_meta,
-    optimizar_nlp_pipeline,
-    construir_entity_ruler,
 )
 from Helpers.PLN.vector_search import (
     cargar_modelo_word2vec,
@@ -39,6 +37,64 @@ from Helpers.PLN.summarizer import (
     cargar_pipeline_resumen,
     generar_resumen_con_metricas as _gen_resumen,
 )
+
+
+def optimizar_nlp_pipeline(nlp: Any) -> Any:
+    """
+    Desactiva 'parser' y 'senter' del pipeline si existen, manteniendo
+    'ner' y 'tok2vec' activos para reducir tiempo de procesamiento.
+
+    Args:
+        nlp: Modelo spaCy cargado.
+
+    Returns:
+        Modelo spaCy con pipeline optimizado.
+    """
+    for componente in ('parser', 'senter'):
+        if componente in nlp.pipe_names:
+            nlp.disable_pipe(componente)
+    print(f"  Componentes activos: {list(nlp.pipe_names)}")
+    return nlp
+
+
+def construir_entity_ruler(nlp: Any) -> Any:
+    """
+    Agrega un EntityRuler al final del pipeline con patrones mínimos de ORG
+    para entidades jurídicas colombianas que spaCy frecuentemente omite.
+
+    Con overwrite_ents=False el ruler añade entidades solo donde NER no
+    encontró nada, preservando los resultados del modelo estadístico.
+
+    Args:
+        nlp: Modelo spaCy cargado.
+
+    Returns:
+        Modelo spaCy con EntityRuler agregado.
+    """
+    ruler = nlp.add_pipe('entity_ruler', last=True, config={'overwrite_ents': False})
+    orgs = [
+        "Ministerio de Agricultura y Desarrollo Rural",
+        "Ministerio de Agricultura",
+        "Ministerio de Hacienda y Crédito Público",
+        "Ministerio de Comercio Industria y Turismo",
+        "Presidencia de la República",
+        "MADR",
+        "Contraloría General de la República",
+        "Contraloría Delegada para el Sector Agropecuario",
+        "INVIMA",
+        "ICA",
+        "FINAGRO",
+        "Banco Agrario",
+        "DNP",
+        "DANE",
+        "Congreso de la República",
+        "El Congreso de Colombia",
+        "Congreso de Colombia",
+        "CONGRESO DE LA REPÚBLICA",
+        "CONGRESO DE COLOMBIA",
+    ]
+    ruler.add_patterns([{"label": "ORG", "pattern": org} for org in orgs])
+    return nlp
 
 
 class PLN:

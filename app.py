@@ -1,16 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
 from dotenv import load_dotenv
 import os
-import glob
-import time
-import subprocess
-from datetime import datetime
 from werkzeug.utils import secure_filename
 from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN
 from Helpers.PLN import pipeline, metrics
 import json
-import requests
-from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -39,89 +33,8 @@ VERSION_APP = "2.0.0"
 CREATOR_APP = "JuanCDG"
 
 
-def _find_elasticsearch_bat_path():
-    """Busca elasticsearch.bat en rutas comunes o usando variable de entorno."""
-    path_from_env = os.getenv("ELASTICSEARCH_BAT_PATH")
-    if path_from_env and os.path.isfile(path_from_env):
-        return path_from_env
-
-    drive = os.path.splitdrive(os.path.abspath(__file__))[0] or "C:"
-    search_patterns = [
-        os.path.join(drive + "\\", "elasticsearch*", "bin", "elasticsearch.bat"),
-        os.path.join(drive + "\\", "Program Files", "elasticsearch*", "bin", "elasticsearch.bat"),
-    ]
-
-    matches = []
-    for pattern in search_patterns:
-        matches.extend(glob.glob(pattern))
-
-    return sorted(matches)[-1] if matches else None
-
-
-def ensure_elasticsearch_ready(max_wait_seconds=15):
-    """Verifica Elasticsearch local y lo inicia automáticamente si no responde."""
-    health_url = "http://localhost:9200"
-    starter_process = None
-    startup_log_path = os.path.join("static", "uploads", "elasticsearch_startup.log")
-
-    try:
-        requests.get(health_url, timeout=1.5)
-        print("✅ Elasticsearch local ya está respondiendo en http://localhost:9200")
-        return
-    except RequestsConnectionError:
-        elasticsearch_bat = _find_elasticsearch_bat_path()
-        if not elasticsearch_bat:
-            raise RuntimeError(
-                "No se encontró elasticsearch.bat automáticamente. "
-                "Indique la ruta exacta en la variable ELASTICSEARCH_BAT_PATH."
-            )
-
-        print(f"⚠️ Elasticsearch no está activo. Iniciando: {elasticsearch_bat}")
-        os.makedirs(os.path.dirname(startup_log_path), exist_ok=True)
-        log_file = open(startup_log_path, "a", encoding="utf-8")
-        log_file.write("\n" + "=" * 60 + "\n")
-        log_file.write(f"Inicio de intento: {datetime.now().isoformat()}\n")
-        log_file.flush()
-
-        starter_process = subprocess.Popen(
-            ["cmd.exe", "/c", elasticsearch_bat],
-            cwd=os.path.dirname(elasticsearch_bat),
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-            close_fds=False,
-        )
-    except RequestException as e:
-        print(f"⚠️ Elasticsearch respondió con un error temporal: {e}")
-
-    deadline = time.monotonic() + max_wait_seconds
-    while time.monotonic() < deadline:
-        if starter_process and starter_process.poll() is not None:
-            log_tail = ""
-            if os.path.exists(startup_log_path):
-                with open(startup_log_path, "r", encoding="utf-8", errors="ignore") as f:
-                    lines = f.readlines()
-                    log_tail = "".join(lines[-20:]).strip()
-
-            raise RuntimeError(
-                "El proceso de Elasticsearch terminó antes de quedar disponible en el puerto 9200. "
-                f"Revise el log en '{startup_log_path}'. "
-                f"Últimas líneas:\n{log_tail if log_tail else '(sin salida en log)'}"
-            )
-
-        try:
-            requests.get(health_url, timeout=1.5)
-            print("✅ Elasticsearch local respondió correctamente. Continuando arranque...")
-            return
-        except RequestsConnectionError:
-            time.sleep(1)
-        except RequestException:
-            time.sleep(1)
-
-    raise RuntimeError("Elasticsearch no respondió en el puerto 9200 dentro de 15 segundos.")
-
 # Inicializar conexiones
-ensure_elasticsearch_ready(max_wait_seconds=int(os.getenv('ELASTIC_STARTUP_TIMEOUT', 120)))
+ElasticSearch.ensure_elasticsearch_ready(max_wait_seconds=int(os.getenv('ELASTIC_STARTUP_TIMEOUT', 120)))
 mongo = MongoDB(MONGO_URI, MONGO_DB)
 mongo.verificar_colecciones(MONGO_COLECCION)
 elastic      = ElasticSearch(ELASTIC_URL, ELASTIC_USER, ELASTIC_PASSWORD)
@@ -915,8 +828,7 @@ def guardar_configuracion():
         'google/mt5-small'
     )
 
-    with open('config/models_config.json', 'w', encoding='utf-8') as f:
-        json.dump(config, f, indent=2, ensure_ascii=False)
+    pipeline.guardar_config_modelos(config)
 
     if modelo_anterior != summarizer_activo:
         pipeline.liberar_modelo_resumen(pln_busqueda)
@@ -965,23 +877,21 @@ def procesar_fase1():
 
         resultados    = []
         tiempos_fase1 = []
-        omitidos      = []
 
         # Deduplicación
-        archivos_nuevos = []
-        for archivo in archivos:
-            ruta         = archivo.get('ruta', '')
-            hash_archivo = archivo.get('hash_archivo') or \
-                           Funciones.calcular_hash_archivo(ruta)
-            if not hash_archivo:
-                continue
-            if elastic.existe_hash(hash_archivo, index):
-                omitidos.append(archivo.get('nombre', ''))
-                yield from evento('omitido',
-                    f"{archivo.get('nombre', '')} → ya indexado, omitido")
-            else:
-                archivo['hash_archivo'] = hash_archivo
-                archivos_nuevos.append(archivo)
+        eventos_omitidos = []
+        omitidos = []
+        def on_omitido(nombre):
+            omitidos.append(nombre)
+            eventos_omitidos.append(
+                f"data: {json.dumps({'tipo': 'omitido', 'mensaje': f'{nombre} → ya indexado, omitido'})}\n\n"
+            )
+
+        archivos_nuevos = pipeline.filtrar_archivos_nuevos(
+            archivos, index, elastic, on_omitido=on_omitido
+        )
+        for ev in eventos_omitidos:
+            yield ev
 
         if not archivos_nuevos:
             yield from evento('fin', json.dumps({
@@ -1082,7 +992,7 @@ def procesar_fase2():
             yield from evento('archivo', f'[{i}/{total}] {nombre}')
             yield from evento('info', '  → Cargando texto temporal...')
 
-            texto = Funciones.cargar_texto_temporal(hash_archivo)
+            texto = pipeline.cargar_texto_temporal(hash_archivo)
             if not texto:
                 yield from evento('error',
                     f'  → Sin texto temporal para {nombre}, omitido')
@@ -1158,7 +1068,7 @@ def indexar_seleccionados():
     for doc_data in documentos:
         hash_a = (doc_data.get('documento') or {}).get('hash_archivo')
         if hash_a:
-            Funciones.eliminar_texto_temporal(hash_a)
+            pipeline.eliminar_texto_temporal(hash_a)
 
     return jsonify({
         'success':   resultado.get('success', False),

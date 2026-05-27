@@ -1,25 +1,24 @@
 """
 Pipeline de preprocesamiento de texto para NormaSearch.
 
-Implementa dos niveles de limpieza:
-  Nivel 1 — limpiar_texto / preprocesar_para_transformer:
-    Solo normalización de caracteres. Seguro para modelos transformer (mT5)
-    que necesitan la sintaxis completa para generar texto coherente.
-  Nivel 2 — preprocesar_texto:
-    Pipeline NLP completo (POS-filter + stopwords + lemas) para TF-IDF y Word2Vec.
+Implementa tres niveles de limpieza según el consumidor:
+  preprocesar_para_transformer → normalización Unicode mínima para mT5/BERT.
+    Preserva números, puntuación y capitalización que el AutoTokenizer necesita.
+  limpiar_texto                → minúsculas + charset español para spaCy y Word2Vec.
+  preprocesar_texto            → pipeline NLP completo (POS-filter + stopwords +
+    lemas) para TF-IDF y búsqueda conceptual.
 """
 
 import re
+import unicodedata
 from typing import Any, List, Optional
 
 import nltk
 from nltk.corpus import stopwords
 from nltk.stem import SnowballStemmer
-from nltk.tokenize import word_tokenize
 
 # Descargar recursos NLTK si no están en caché
-for _recurso, _tipo in [('punkt', 'tokenizers'), ('punkt_tab', 'tokenizers'),
-                         ('stopwords', 'corpora')]:
+for _recurso, _tipo in [('stopwords', 'corpora')]:
     try:
         nltk.data.find(f'{_tipo}/{_recurso}')
     except LookupError:
@@ -65,31 +64,25 @@ def limpiar_texto(texto: str) -> str:
 
 def preprocesar_para_transformer(texto: str) -> str:
     """
-    Limpieza mínima para entrada a modelos transformer (mT5, BERT).
+    Normalización mínima para entrada a modelos transformer (mT5, BERT).
 
-    No elimina stopwords ni lematiza: los modelos seq2seq necesitan la
-    gramática completa para que el encoder construya atención contextual.
+    Preserva números, puntuación y capitalización: el AutoTokenizer de mT5
+    (SentencePiece) necesita el texto original para construir subword units
+    coherentes. Aplicar limpiar_texto() antes degrada la calidad del resumen.
 
     Args:
         texto: Texto en español sin procesar.
 
     Returns:
-        Texto normalizado con sintaxis intacta, listo para AutoTokenizer.
+        Texto con codificación normalizada (NFC), sin caracteres de control,
+        espacios colapsados. Números, puntuación y mayúsculas intactos.
     """
-    return limpiar_texto(texto)
-
-
-def tokenizar(texto: str) -> List[str]:
-    """
-    Tokenización con word_tokenize de NLTK (punkt español).
-
-    Args:
-        texto: Cadena ya normalizada con limpiar_texto.
-
-    Returns:
-        Lista de tokens incluyendo signos de puntuación como tokens separados.
-    """
-    return word_tokenize(texto, language='spanish')
+    if not texto:
+        return ''
+    texto = unicodedata.normalize('NFC', texto)
+    texto = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', texto)
+    texto = re.sub(r'[ \t]+', ' ', texto)
+    return texto.strip()
 
 
 def aplicar_stemming(tokens: List[str]) -> List[str]:

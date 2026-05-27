@@ -41,7 +41,7 @@
             <h2 class="mb-3">Buscador de Normatividad</h2>
 
             <!-- Formulario de búsqueda -->
-            <div class="card mb-3">
+            <div class="card mb-3 buscador_1">
                 <div class="card-body">
                     <form onsubmit="buscar(event)">
                         <div class="input-group input-group-lg">
@@ -69,7 +69,7 @@
                 <div class="row g-3">
                     <!-- Filtros -->
                     <div class="col-md-3">
-                        <div class="card">
+                        <div class="card buscador_1">
                             <div class="card-header py-2 d-flex justify-content-between align-items-center">
                                 <strong>Filtros</strong>
                                 <span class="badge bg-primary" id="totalResultados">0</span>
@@ -175,7 +175,7 @@
                 ).join(' ');
                 const resumen = (s.resumen || '').substring(0, 300);
                 return `
-                <div class="card card-resultado">
+                <div class="card card-resultado buscador_1">
                     <div class="card-body py-2">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>

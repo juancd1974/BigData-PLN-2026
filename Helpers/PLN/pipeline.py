@@ -43,6 +43,105 @@ def cargar_config_modelos() -> Dict:
         return {}
 
 
+def guardar_config_modelos(config: Dict) -> bool:
+    """
+    Persiste el diccionario de configuración en config/models_config.json.
+
+    Args:
+        config: Diccionario completo de configuración de modelos.
+
+    Returns:
+        True si se guardó correctamente, False si hubo un error.
+    """
+    try:
+        with open(_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception as exc:
+        print(f"  ✗ Error al guardar configuración: {exc}")
+        return False
+
+
+TEMP_DIR = 'static/temp'
+
+
+def guardar_texto_temporal(hash_archivo: str, nombre_archivo: str,
+                            texto: str) -> Optional[str]:
+    """
+    Guarda el texto extraído de un PDF en un JSON temporal en static/temp/.
+
+    Args:
+        hash_archivo:   Hash SHA-256 con prefijo "sha256:".
+        nombre_archivo: Nombre del archivo PDF fuente.
+        texto:          Texto extraído del documento.
+
+    Returns:
+        Ruta del archivo guardado, o None si falló.
+    """
+    try:
+        os.makedirs(TEMP_DIR, exist_ok=True)
+        hash_limpio = hash_archivo.replace("sha256:", "")
+        ruta = os.path.join(TEMP_DIR, f"{hash_limpio}.json")
+        datos = {
+            "nombre_archivo": nombre_archivo,
+            "hash_archivo": hash_archivo,
+            "texto": texto,
+            "fecha_extraccion": datetime.now().isoformat(),
+        }
+        with open(ruta, 'w', encoding='utf-8') as f:
+            json.dump(datos, f, indent=4, ensure_ascii=False)
+        return ruta
+    except Exception as exc:
+        print(f"Error al guardar texto temporal: {exc}")
+        return None
+
+
+def cargar_texto_temporal(hash_archivo: str) -> Optional[str]:
+    """
+    Carga el texto desde el JSON temporal correspondiente al hash.
+
+    Args:
+        hash_archivo: Hash SHA-256 con prefijo "sha256:".
+
+    Returns:
+        Texto como string, o None si el archivo no existe o no se puede leer.
+    """
+    try:
+        hash_limpio = hash_archivo.replace("sha256:", "")
+        ruta = os.path.join(TEMP_DIR, f"{hash_limpio}.json")
+        if not os.path.exists(ruta):
+            return None
+        with open(ruta, 'r', encoding='utf-8') as f:
+            datos = json.load(f)
+        return datos.get("texto")
+    except Exception as exc:
+        print(f"Error al cargar texto temporal: {exc}")
+        return None
+
+
+def eliminar_texto_temporal(hash_archivo: str) -> bool:
+    """
+    Elimina el JSON temporal correspondiente al hash.
+
+    Args:
+        hash_archivo: Hash SHA-256 con prefijo "sha256:".
+
+    Returns:
+        True si se eliminó correctamente o el archivo no existía,
+        False si hubo un error al eliminar.
+    """
+    try:
+        hash_limpio = hash_archivo.replace("sha256:", "")
+        ruta = os.path.join(TEMP_DIR, f"{hash_limpio}.json")
+        if not os.path.exists(ruta):
+            return True
+        os.remove(ruta)
+        return True
+    except Exception as exc:
+        print(f"Error al eliminar texto temporal: {exc}")
+        return False
+
+
 def obtener_modelo_resumen_activo() -> str:
     """
     Retorna el modelo_hf del summarizer marcado como activo en la configuración.
@@ -177,7 +276,7 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
         calidad_ok=metricas_ext['calidad_ok'],
     )
     if callback: callback('ok', f"Texto extraído ({metricas_ext['metodo']}, {metricas_ext['longitud_caracteres']} chars, {metricas_ext['tiempo_segundos']}s)")
-    Funciones.guardar_texto_temporal(hash_archivo, nombre, texto)
+    guardar_texto_temporal(hash_archivo, nombre, texto)
 
     if not texto or len(texto.strip()) < 50:
         print(f"  ✗ Texto insuficiente en '{nombre}'. Se omite el documento.")
@@ -263,7 +362,8 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
 
 
 def filtrar_archivos_nuevos(archivos: List[Dict],
-                             index: str, elastic) -> List[Dict]:
+                             index: str, elastic,
+                             on_omitido=None) -> List[Dict]:
     """
     Filtra de una lista de archivos los que ya están indexados en Elasticsearch.
 
@@ -271,9 +371,10 @@ def filtrar_archivos_nuevos(archivos: List[Dict],
     índice. Solo retorna los archivos cuyo hash no está presente.
 
     Args:
-        archivos: Lista de dicts con al menos la clave 'ruta'.
-        index:    Nombre del índice de Elasticsearch.
-        elastic:  Cliente Elasticsearch con método existe_hash().
+        archivos:   Lista de dicts con al menos la clave 'ruta'.
+        index:      Nombre del índice de Elasticsearch.
+        elastic:    Cliente Elasticsearch con método existe_hash().
+        on_omitido: Callable opcional que recibe el nombre del archivo omitido.
 
     Returns:
         Lista de dicts de archivos nuevos, con la clave 'hash_archivo' agregada.
@@ -288,6 +389,8 @@ def filtrar_archivos_nuevos(archivos: List[Dict],
             continue
         if elastic.existe_hash(hash_archivo, index):
             omitidos += 1
+            if on_omitido:
+                on_omitido(archivo.get('nombre', ''))
             continue
         archivo['hash_archivo'] = hash_archivo
         nuevos.append(archivo)

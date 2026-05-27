@@ -6,9 +6,10 @@ multilingüe, 101 idiomas). Todos los modelos mT5 tienen un contexto de entrada
 de ~512 tokens; la estrategia map-reduce sobre chunks de 4 000 chars maneja
 documentos de cualquier longitud.
 
-La entrada recibe solo limpieza de nivel 1 (preprocesar_para_transformer):
-los modelos seq2seq necesitan la sintaxis completa para generar texto coherente.
-Eliminar stopwords antes del encoder degrada la calidad del resumen.
+El texto se pasa al AutoTokenizer de mT5 con normalización mínima
+(preprocesar_para_transformer): se preservan números, puntuación y
+capitalización que SentencePiece necesita para construir subword units
+coherentes. Aplicar limpiar_texto() antes del encoder degrada la calidad.
 
 Función principal: generar_resumen_con_metricas()
 """

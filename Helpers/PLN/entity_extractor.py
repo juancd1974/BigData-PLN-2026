@@ -8,8 +8,6 @@ que superan 800 000 caracteres se procesan automáticamente por chunks.
 Funciones principales:
   extraer_entidades_mejorado()  → NER con normalización de encabezado, chunking y métricas
   extraer_metadatos_mejorado()  → tipo, número, fecha, emisor y título con métricas de completitud
-  construir_entity_ruler()      → extiende spaCy con entidades jurídicas colombianas
-  optimizar_nlp_pipeline()      → deshabilita componentes no necesarios para NER
   normalizar_fecha()            → convierte expresiones de fecha a ISO 8601
   extraer_temas()               → palabras clave por frecuencia de lemas POS-filtrados
 
@@ -169,64 +167,6 @@ def extraer_temas(nlp: Any, texto: str, top_n: int = 10) -> List[Tuple[str, floa
     if total > 0:
         return [(lema, (freq / total) * 100) for lema, freq in temas]
     return [(lema, 0.0) for lema, _ in temas]
-
-
-def optimizar_nlp_pipeline(nlp: Any) -> Any:
-    """
-    Desactiva 'parser' y 'senter' del pipeline si existen, manteniendo
-    'ner' y 'tok2vec' activos para reducir tiempo de procesamiento.
-
-    Args:
-        nlp: Modelo spaCy cargado.
-
-    Returns:
-        Modelo spaCy con pipeline optimizado.
-    """
-    for componente in ('parser', 'senter'):
-        if componente in nlp.pipe_names:
-            nlp.disable_pipe(componente)
-    print(f"  Componentes activos: {list(nlp.pipe_names)}")
-    return nlp
-
-
-def construir_entity_ruler(nlp: Any) -> Any:
-    """
-    Agrega un EntityRuler al final del pipeline con patrones mínimos de ORG
-    para entidades jurídicas colombianas que spaCy frecuentemente omite.
-
-    Con overwrite_ents=False el ruler añade entidades solo donde NER no
-    encontró nada, preservando los resultados del modelo estadístico.
-
-    Args:
-        nlp: Modelo spaCy cargado.
-
-    Returns:
-        Modelo spaCy con EntityRuler agregado.
-    """
-    ruler = nlp.add_pipe('entity_ruler', last=True, config={'overwrite_ents': False})
-    orgs = [
-        "Ministerio de Agricultura y Desarrollo Rural",
-        "Ministerio de Agricultura",
-        "Ministerio de Hacienda y Crédito Público",
-        "Ministerio de Comercio Industria y Turismo",
-        "Presidencia de la República",
-        "MADR",
-        "Contraloría General de la República",
-        "Contraloría Delegada para el Sector Agropecuario",
-        "INVIMA",
-        "ICA",
-        "FINAGRO",
-        "Banco Agrario",
-        "DNP",
-        "DANE",
-        "Congreso de la República",
-        "El Congreso de Colombia",
-        "Congreso de Colombia",
-        "CONGRESO DE LA REPÚBLICA",
-        "CONGRESO DE COLOMBIA",
-    ]
-    ruler.add_patterns([{"label": "ORG", "pattern": org} for org in orgs])
-    return nlp
 
 
 def normalizar_encabezado_para_ner(texto: str) -> str:
