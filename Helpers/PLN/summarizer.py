@@ -1,13 +1,16 @@
 """
 Resumen abstractivo con mT5 para NormaSearch.
 
-Modelo: google/mt5-small (multilingüe, 101 idiomas, incluye español).
-Estrategia para documentos largos: map-reduce sobre chunks de 3 000 chars,
-dado que mT5-small tiene un contexto de entrada de ~512 tokens.
+El modelo concreto se configura desde pipeline.py (default: google/mt5-small,
+multilingüe, 101 idiomas). Todos los modelos mT5 tienen un contexto de entrada
+de ~512 tokens; la estrategia map-reduce sobre chunks de 4 000 chars maneja
+documentos de cualquier longitud.
 
 La entrada recibe solo limpieza de nivel 1 (preprocesar_para_transformer):
 los modelos seq2seq necesitan la sintaxis completa para generar texto coherente.
 Eliminar stopwords antes del encoder degrada la calidad del resumen.
+
+Función principal: generar_resumen_con_metricas()
 """
 
 import math
@@ -114,80 +117,6 @@ def _resumir_fragmento(pipeline_resumen, fragmento: str,
     return resultado[0]['summary_text']
 
 
-def generar_resumen_abstractivo(pipeline_resumen,
-                                 texto: str,
-                                 max_length: int = 300,
-                                 min_length: int = 30,
-                                 chunk_chars: int = 4000) -> str:
-    """
-    Genera un resumen abstractivo usando estrategia map-reduce.
-
-    MAP:    divide el texto en chunks de chunk_chars → resumen parcial por chunk.
-    REDUCE: si hay múltiples resúmenes → concatenar; si el concatenado supera
-            chunk_chars → aplicar un paso adicional de resumen.
-
-    Retorna string vacío si el pipeline no está disponible o el texto es
-    demasiado corto, sin lanzar excepción (degradación sin interrupción).
-
-    Args:
-        pipeline_resumen: Pipeline de HuggingFace (None/False → sin resumen).
-        texto:            Texto de la norma en español (sin preprocesar).
-        max_length:       Máximo de tokens a generar por fragmento.
-        min_length:       Mínimo de tokens generados.
-        chunk_chars:      Tamaño máximo de cada chunk en caracteres.
-
-    Returns:
-        Resumen como string, o "" si el pipeline no está disponible.
-    """
-    if not pipeline_resumen:
-        return ""
-
-    texto_limpio = preprocesar_para_transformer(texto)
-    if not texto_limpio or len(texto_limpio.strip()) < 50:
-        return ""
-
-    chunks_validos = [
-        c for c in (texto_limpio[i:i + chunk_chars]
-                    for i in range(0, len(texto_limpio), chunk_chars))
-        if len(c.strip()) >= 100
-    ]
-    if not chunks_validos:
-        return ""
-
-    total = len(chunks_validos)
-    print(f"  → Resumiendo {total} segmento(s) (~{total * 30}–{total * 60}s en CPU)")
-
-    resumenes: list = []
-    for idx, chunk in enumerate(chunks_validos, 1):
-        t0 = time.time()
-        print(f"     Segmento {idx}/{total}...", end='', flush=True)
-        try:
-            resumenes.append(_resumir_fragmento(pipeline_resumen, chunk, max_length, min_length))
-            print(f" ✓ {time.time() - t0:.1f}s")
-        except Exception as exc:
-            print(f" ✗ {exc}")
-
-    if not resumenes:
-        return ""
-    if len(resumenes) == 1:
-        return resumenes[0]
-
-    combinado = ' '.join(resumenes)
-    if len(combinado) <= chunk_chars:
-        return combinado
-
-    # Paso de reduce: resumir la concatenación de resúmenes parciales
-    print(f"     Reduce final ({len(combinado)} chars)...", end='', flush=True)
-    t0 = time.time()
-    try:
-        final = _resumir_fragmento(pipeline_resumen, combinado[:chunk_chars], max_length, min_length)
-        print(f" ✓ {time.time() - t0:.1f}s")
-        return final
-    except Exception as exc:
-        print(f" ✗ {exc}")
-        return combinado   # fallback: devolver la concatenación sin reduce
-
-
 def calcular_perplexidad(pipeline_resumen, texto: str) -> float:
     """
     Calcula la perplejidad del texto usando el modelo mT5 del pipeline.
@@ -231,12 +160,15 @@ def generar_resumen_con_metricas(pipeline_resumen,
                                   min_length: int = 30,
                                   chunk_chars: int = 4000) -> Tuple[str, Dict]:
     """
-    Wrapper de generar_resumen_abstractivo() que agrega métricas de ejecución.
+    Genera un resumen abstractivo con métricas de ejecución usando estrategia map-reduce.
 
-    Captura tiempo total, número estimado de chunks, longitudes de entrada
-    y salida, y perplejidad del resumen generado. La perplejidad se calcula
-    sobre el resumen (no sobre el texto original) para medir la calidad
-    lingüística de la salida del modelo.
+    MAP:    preprocesa y divide el texto en chunks → resumen parcial por chunk.
+    REDUCE: si hay múltiples resúmenes → concatenar; si el concatenado supera
+            chunk_chars → aplicar un paso adicional de resumen.
+
+    Captura tiempo total, número estimado de chunks, longitudes de entrada y salida,
+    y perplejidad del resumen. La perplejidad se calcula sobre el resumen generado
+    para medir la calidad lingüística de la salida del modelo.
 
     Args:
         pipeline_resumen: Pipeline de HuggingFace (None/False → retorna ("", {})).
@@ -248,7 +180,7 @@ def generar_resumen_con_metricas(pipeline_resumen,
     Returns:
         Tupla (resumen, metricas). metricas contiene modelo, tiempo_segundos,
         num_chunks, longitud_resumen, longitud_texto y perplexidad.
-        Retorna ("", {}) si el pipeline no está disponible.
+        Retorna ("", {}) si el pipeline no está disponible o el texto es demasiado corto.
     """
     if not pipeline_resumen:
         return "", {}
@@ -256,9 +188,48 @@ def generar_resumen_con_metricas(pipeline_resumen,
     inicio = time.time()
     num_chunks = max(1, math.ceil(len(texto) / chunk_chars))
 
-    resumen = generar_resumen_abstractivo(
-        pipeline_resumen, texto, max_length, min_length, chunk_chars
-    )
+    texto_limpio = preprocesar_para_transformer(texto)
+    if not texto_limpio or len(texto_limpio.strip()) < 50:
+        return "", {}
+
+    chunks_validos = [
+        c for c in (texto_limpio[i:i + chunk_chars]
+                    for i in range(0, len(texto_limpio), chunk_chars))
+        if len(c.strip()) >= 100
+    ]
+    if not chunks_validos:
+        return "", {}
+
+    total = len(chunks_validos)
+    print(f"  → Resumiendo {total} segmento(s) (~{total * 30}–{total * 60}s en CPU)")
+
+    resumenes: list = []
+    for idx, chunk in enumerate(chunks_validos, 1):
+        t0 = time.time()
+        print(f"     Segmento {idx}/{total}...", end='', flush=True)
+        try:
+            resumenes.append(_resumir_fragmento(pipeline_resumen, chunk, max_length, min_length))
+            print(f" ✓ {time.time() - t0:.1f}s")
+        except Exception as exc:
+            print(f" ✗ {exc}")
+
+    if not resumenes:
+        resumen = ""
+    elif len(resumenes) == 1:
+        resumen = resumenes[0]
+    else:
+        combinado = ' '.join(resumenes)
+        if len(combinado) <= chunk_chars:
+            resumen = combinado
+        else:
+            print(f"     Reduce final ({len(combinado)} chars)...", end='', flush=True)
+            t0 = time.time()
+            try:
+                resumen = _resumir_fragmento(pipeline_resumen, combinado[:chunk_chars], max_length, min_length)
+                print(f" ✓ {time.time() - t0:.1f}s")
+            except Exception as exc:
+                print(f" ✗ {exc}")
+                resumen = combinado
 
     perplexidad = calcular_perplexidad(pipeline_resumen, resumen)
     tiempo_total = round(time.time() - inicio, 3)

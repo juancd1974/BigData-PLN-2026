@@ -1,8 +1,18 @@
 """
-Orquestador del pipeline completo de procesamiento de documentos normativos.
+Pipeline de procesamiento de documentos normativos para NormaSearch.
 
-Concentra la lógica de extracción, NER, metadatos, temas y resumen,
-y delega el registro de métricas a Helpers.PLN.metrics.
+Orquesta las etapas de extracción de texto, NER, metadatos, temas y resumen
+sobre archivos PDF y TXT, coordinando PLN.py, entity_extractor, summarizer y
+metrics. Expone dos flujos de procesamiento:
+
+  procesar_fase1()  → pipeline completo con el modelo liviano (mT5-small)
+  procesar_fase2()  → solo resumen con el modelo de mayor calidad (mT5-base)
+
+Los errores por etapa se registran en consola sin interrumpir el pipeline:
+el documento se indexa con los campos que se pudieron extraer correctamente.
+
+Configuración de modelos: config/models_config.json
+Métricas por documento:   static/metrics/<hash>_<modelo>.json
 """
 
 import gc
@@ -97,13 +107,12 @@ def liberar_modelo_resumen(pln) -> None:
     """
     Libera la memoria del modelo de resumen cargado en el objeto PLN.
 
-    Llama close(), anula la referencia al pipeline, vacía la caché CUDA
-    si está disponible y fuerza una pasada del recolector de basura.
+    Anula la referencia al pipeline, vacía la caché CUDA si está disponible
+    y fuerza una pasada del recolector de basura.
 
     Args:
         pln: Instancia de PLN con _pipeline_resumen cargado.
     """
-    pln.close()
     pln._pipeline_resumen = None
     if torch.cuda.is_available():
         torch.cuda.empty_cache()

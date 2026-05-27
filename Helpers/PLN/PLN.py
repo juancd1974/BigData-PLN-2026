@@ -1,11 +1,17 @@
 """
-Orquestador PLN para NormaSearch.
+Capa de abstracción de modelos NLP para NormaSearch.
 
-Fachada sobre los cuatro módulos de Helpers:
+Encapsula y gestiona el estado de los modelos de ML (spaCy, Word2Vec, mT5)
+y expone métodos de alto nivel para procesamiento lingüístico. Es una fachada
+orientada a objetos sobre los módulos especializados de Helpers/PLN:
   text_preprocessing → normalización y tokenización
   entity_extractor   → NER, metadatos, detección de fechas
   vector_search      → Word2Vec, vectorización, búsqueda conceptual
-  summarizer         → resumen abstractivo con mT5-small
+  summarizer         → resumen abstractivo con mT5
+
+Su responsabilidad es gestionar el ciclo de vida de los modelos: carga, uso
+y liberación de memoria. No conoce ni gestiona documentos, archivos, métricas
+ni persistencia — esas responsabilidades pertenecen a pipeline.py.
 """
 
 import spacy
@@ -17,10 +23,12 @@ from Helpers.PLN.text_preprocessing import (
     dividir_en_chunks as _dividir,
 )
 from Helpers.PLN.entity_extractor import (
-    extraer_entidades_texto_largo,
     normalizar_fecha as _normalizar_fecha,
-    extraer_metadatos_norma as _extraer_meta,
     extraer_temas as _extraer_temas,
+    extraer_entidades_mejorado as _extraer_entidades,
+    extraer_metadatos_mejorado as _extraer_meta,
+    optimizar_nlp_pipeline,
+    construir_entity_ruler,
 )
 from Helpers.PLN.vector_search import (
     cargar_modelo_word2vec,
@@ -29,7 +37,7 @@ from Helpers.PLN.vector_search import (
 )
 from Helpers.PLN.summarizer import (
     cargar_pipeline_resumen,
-    generar_resumen_abstractivo as _gen_resumen,
+    generar_resumen_con_metricas as _gen_resumen,
 )
 
 
@@ -51,12 +59,16 @@ class PLN:
             print(f"Cargando modelo spaCy '{self.modelo_spacy_nombre}'...")
             self.nlp = spacy.load(self.modelo_spacy_nombre)
             self.nlp.max_length = 3_000_000
+            self.nlp = optimizar_nlp_pipeline(self.nlp)  # deshabilita 'parser' y 'senter' para reducir latencia
+            construir_entity_ruler(self.nlp)              # debe llamarse después de optimizar: agrega ORG al pipeline ya reducido
             print(f"  ✓ '{self.modelo_spacy_nombre}' cargado")
         except OSError:
             print(f"  ✗ Modelo '{self.modelo_spacy_nombre}' no encontrado.")
             print(f"    Ejecuta: python -m spacy download {self.modelo_spacy_nombre}")
             try:
                 self.nlp = spacy.load('es_core_news_sm')
+                self.nlp = optimizar_nlp_pipeline(self.nlp)  # deshabilita 'parser' y 'senter' para reducir latencia
+                construir_entity_ruler(self.nlp)              # debe llamarse después de optimizar: agrega ORG al pipeline ya reducido
                 print("  ⚠ Usando es_core_news_sm como fallback")
             except OSError:
                 print("  ✗ No se pudo cargar ningún modelo spaCy")
@@ -100,7 +112,8 @@ class PLN:
 
     def extraer_entidades(self, texto: str) -> Dict[str, List[str]]:
         """Extrae entidades nombradas con spaCy NER (6 categorías). Maneja textos > 800 K."""
-        return extraer_entidades_texto_largo(self.nlp, texto)
+        entidades, _ = _extraer_entidades(self.nlp, texto)
+        return entidades
 
     def normalizar_fecha(self, texto: str) -> Optional[str]:
         """Convierte expresión de fecha en español a YYYY-MM-DD."""
@@ -108,7 +121,8 @@ class PLN:
 
     def extraer_metadatos_norma(self, texto: str, nombre_archivo: str = '') -> Dict:
         """Extrae tipo, número, fecha, entidad emisora y título de una norma colombiana."""
-        return _extraer_meta(self.nlp, texto, nombre_archivo=nombre_archivo)
+        metadatos, _ = _extraer_meta(self.nlp, texto, nombre_archivo=nombre_archivo)
+        return metadatos
 
     def extraer_temas(self, texto: str, top_n: int = 10) -> List[Tuple[str, float]]:
         """Palabras clave por frecuencia de lemas filtradas por POS tag."""
@@ -117,13 +131,14 @@ class PLN:
     # ── Resumen abstractivo ───────────────────────────────────────────────
 
     def generar_resumen_abstractivo(self, texto: str,
-                                    max_length: int = 150,
-                                    min_length: int = 10,
-                                    chunk_chars: int = 3000) -> str:
+                                    max_length: int = 300,
+                                    min_length: int = 30,
+                                    chunk_chars: int = 4000) -> str:
         """Resumen mT5 con map-reduce. Carga el pipeline al primer uso."""
         if self._pipeline_resumen is None:
             self._pipeline_resumen = cargar_pipeline_resumen()
-        return _gen_resumen(self._pipeline_resumen, texto, max_length, min_length, chunk_chars)
+        resumen, _ = _gen_resumen(self._pipeline_resumen, texto, max_length, min_length, chunk_chars)
+        return resumen
 
     # ── Búsqueda conceptual Word2Vec ──────────────────────────────────────
 
@@ -145,15 +160,3 @@ class PLN:
             return None
         return vectorizar_texto(texto, self._wv, self.nlp)
 
-    # ── Procesamiento completo ────────────────────────────────────────────
-
-    def procesar_texto_largo(self, texto: str) -> Dict:
-        """Extrae entidades, temas y resumen. extraer_entidades maneja el chunking internamente."""
-        return {
-            "entidades": self.extraer_entidades(texto),
-            "temas": self.extraer_temas(texto[:500_000]),
-            "resumen": self.generar_resumen_abstractivo(texto),
-        }
-
-    def close(self):
-        pass

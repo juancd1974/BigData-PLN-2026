@@ -1,3 +1,22 @@
+"""
+Utilidades de I/O y procesamiento de archivos para NormaSearch.
+
+Agrupa operaciones de sistema de archivos, extracción de texto desde PDF,
+cálculo de hashes y persistencia de datos temporales. Es usado por pipeline.py
+y las rutas de Flask en app.py.
+
+La clase Funciones agrupa métodos estáticos por conveniencia; no mantiene estado.
+
+Extracción de texto PDF (con fallback automático a OCR):
+  extraer_texto_pdf_con_metricas() → intenta PyMuPDF; si la calidad es baja, usa Tesseract OCR
+  _calidad_texto()                 → detecta PDFs con fuente mal decodificada
+
+Archivos temporales en static/temp/ (texto extraído entre fase 1 y fase 2):
+  guardar_texto_temporal()   → persiste texto extraído en JSON por hash de archivo
+  cargar_texto_temporal()    → recupera el texto para la fase 2
+  eliminar_texto_temporal()  → limpieza post-indexación
+"""
+
 import os
 import re
 import zipfile
@@ -132,10 +151,12 @@ class Funciones:
     def _calidad_texto(texto: str) -> bool:
         """True si el texto extraído no parece caracteres corruptos de fuente mal decodificada."""
         palabras = texto.lower().split()
+        # Validación 1: mínimo de palabras para que el análisis estadístico sea significativo
         if len(palabras) < 20:
             return False
         freq = Counter(palabras)
         top_count = freq.most_common(1)[0][1]
+        # Validación 2: una palabra dominante (>30% del total) indica texto repetitivo o corrupto
         if top_count / len(palabras) > 0.30:
             return False
         if len(freq) < min(30, len(palabras) // 3):

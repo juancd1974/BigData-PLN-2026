@@ -1,9 +1,17 @@
 """
-Extracción de entidades nombradas y metadatos para NormaSearch.
+Extracción de entidades nombradas y metadatos normativos para NormaSearch.
 
-Combina NER con spaCy (es_core_news_lg) y dateparser para producir
-estructuras de metadatos sobre documentos del corpus normativo colombiano.
-Incluye procesamiento por chunks para documentos que superan 1 M de caracteres.
+Combina NER con spaCy (es_core_news_lg) y dateparser para producir estructuras
+de metadatos sobre documentos del corpus normativo colombiano. Los documentos
+que superan 800 000 caracteres se procesan automáticamente por chunks.
+
+Funciones principales:
+  extraer_entidades_mejorado()  → NER con normalización de encabezado, chunking y métricas
+  extraer_metadatos_mejorado()  → tipo, número, fecha, emisor y título con métricas de completitud
+  construir_entity_ruler()      → extiende spaCy con entidades jurídicas colombianas
+  optimizar_nlp_pipeline()      → deshabilita componentes no necesarios para NER
+  normalizar_fecha()            → convierte expresiones de fecha a ISO 8601
+  extraer_temas()               → palabras clave por frecuencia de lemas POS-filtrados
 
 Requisito: python -m spacy download es_core_news_lg
 """
@@ -76,102 +84,6 @@ _RE_FECHA_EN_NOMBRE = re.compile(
 )
 
 
-def extraer_entidades(nlp: Any, texto: str) -> Dict[str, List[str]]:
-    """
-    Extrae entidades nombradas con spaCy NER y las clasifica en seis categorías.
-
-    Mapeo de etiquetas spaCy a categorías de salida:
-      PER          → personas
-      LOC, GPE     → lugares   (LOC = geografía física; GPE = entidades geopolíticas)
-      ORG          → organizaciones
-      DATE         → fechas    (texto crudo; usar normalizar_fecha para convertir)
-      LAW / heurística textual → leyes
-      Resto (MISC, TIME, MONEY…) → otros  (incluye la etiqueta para transparencia)
-
-    Pasar el texto ORIGINAL sin preprocesamiento: la capitalización es la principal
-    señal del modelo para distinguir "ministerio" (común) de "Ministerio" (ORG).
-    La deduplicación preserva el orden de primera aparición con dict.fromkeys.
-
-    Args:
-        nlp:   Modelo spaCy cargado.
-        texto: Texto en español en forma original.
-
-    Returns:
-        Dict con seis listas de strings únicos en orden de aparición.
-    """
-    if nlp is None:
-        raise ValueError("Modelo spaCy no cargado. Ejecuta: python -m spacy download es_core_news_lg")
-
-    doc = nlp(texto)
-    entidades: Dict[str, List[str]] = {
-        'personas': [], 'lugares': [], 'organizaciones': [],
-        'fechas': [], 'leyes': [], 'otros': [],
-    }
-
-    for ent in doc.ents:
-        texto_ent = ent.text.strip()
-        etiqueta  = ent.label_
-
-        if etiqueta == 'PER':
-            entidades['personas'].append(texto_ent)
-        elif etiqueta in ('LOC', 'GPE'):
-            entidades['lugares'].append(texto_ent)
-        elif etiqueta == 'ORG':
-            entidades['organizaciones'].append(texto_ent)
-        elif etiqueta == 'DATE':
-            entidades['fechas'].append(texto_ent)
-        elif (etiqueta == 'LAW'
-              or 'ley' in texto_ent.lower()
-              or 'decreto' in texto_ent.lower()
-              or 'resolución' in texto_ent.lower()):
-            entidades['leyes'].append(texto_ent)
-        else:
-            entidades['otros'].append(f"{texto_ent} ({etiqueta})")
-
-    for key in entidades:
-        entidades[key] = list(dict.fromkeys(entidades[key]))
-
-    return entidades
-
-
-def extraer_entidades_texto_largo(nlp: Any,
-                                  texto: str,
-                                  max_chars: int = 800_000) -> Dict[str, List[str]]:
-    """
-    Extrae entidades de documentos que superan el límite de spaCy.
-
-    Segmenta con dividir_en_chunks (corte en párrafos) para no partir entidades
-    multipalabra entre fragmentos, agrega resultados y deduplica globalmente.
-
-    Args:
-        nlp:       Modelo spaCy cargado.
-        texto:     Texto completo (puede superar 1 M de caracteres).
-        max_chars: Tamaño máximo por chunk.
-
-    Returns:
-        Diccionario acumulado con la misma estructura que extraer_entidades.
-    """
-    if len(texto) <= max_chars:
-        return extraer_entidades(nlp, texto)
-
-    print(f"  → Documento largo ({len(texto):,} chars). Procesando NER en chunks...")
-
-    chunks = dividir_en_chunks(texto, max_chars)
-    entidades_total: Dict[str, List[str]] = {
-        k: [] for k in ('personas', 'lugares', 'organizaciones', 'fechas', 'leyes', 'otros')
-    }
-
-    for i, chunk in enumerate(chunks, 1):
-        print(f"     Chunk NER {i}/{len(chunks)} ({len(chunk):,} chars)...")
-        for key, vals in extraer_entidades(nlp, chunk).items():
-            entidades_total[key].extend(vals)
-
-    for key in entidades_total:
-        entidades_total[key] = list(dict.fromkeys(entidades_total[key]))
-
-    return entidades_total
-
-
 def normalizar_fecha(texto: str) -> Optional[str]:
     """
     Convierte una expresión de fecha en español a formato ISO 8601 (YYYY-MM-DD).
@@ -217,121 +129,6 @@ def buscar_fechas_en_texto(texto: str) -> List[Tuple[str, str]]:
     if not encontradas:
         return []
     return [(txt, dt.strftime('%Y-%m-%d')) for txt, dt in encontradas]
-
-
-def extraer_metadatos_norma(nlp: Any, texto: str, nombre_archivo: str = '') -> Dict:
-    """
-    Extrae metadatos estructurados del encabezado de una norma colombiana.
-
-    Estrategia por prioridad:
-      1. Nombre de archivo (fuente primaria — más fiable en PDFs con codificación compleja):
-           _RE_NOMBRE_ARCHIVO → tipo_norma, numero_norma, anio_norma
-           _RE_FECHA_EN_NOMBRE → fecha_documento, anio_norma
-      2. Texto del documento (fallback para campos aún en None):
-           _RE_FECHA_LARGA / _RE_FECHA_MES_ANIO → fecha_documento
-           _TIPOS_NORMA → tipo_norma
-           _RE_NUMERO_NORMA → numero_norma
-           _RE_ANIO → anio_norma
-      3. NER spaCy sobre primeras 20 líneas → entidad_emisora (siempre desde texto)
-      4. Patrón "Por el/la cual…" en primeras 30 líneas → titulo_norma
-
-    Args:
-        nlp:            Modelo spaCy cargado.
-        texto:          Texto completo de la norma (sin preprocesar).
-        nombre_archivo: Nombre del archivo fuente (opcional, mejora extracción).
-
-    Returns:
-        Dict con claves: tipo_norma, numero_norma, anio_norma,
-        entidad_emisora, fecha_documento, titulo_norma. None si no se encontró.
-    """
-    if nlp is None:
-        raise ValueError("Modelo spaCy no cargado.")
-
-    lineas              = texto.split('\n')
-    encabezado          = '\n'.join(lineas[:20]).upper()
-    encabezado_original = '\n'.join(lineas[:20])
-
-    meta: Dict = {
-        'tipo_norma': None, 'numero_norma': None, 'anio_norma': None,
-        'entidad_emisora': None, 'fecha_documento': None, 'titulo_norma': None,
-    }
-
-    # PASO 1 — Nombre de archivo (fuente prioritaria)
-    if nombre_archivo:
-        nombre_sin_ext = os.path.splitext(nombre_archivo)[0]
-        m = _RE_NOMBRE_ARCHIVO.match(nombre_sin_ext)
-        if m:
-            tipo_raw = m.group(1).upper()
-            meta['tipo_norma']   = 'RESOLUCIÓN' if 'RESOLUCI' in tipo_raw else tipo_raw
-            meta['numero_norma'] = int(m.group(2))
-            meta['anio_norma']   = int(m.group(3))
-        m_fecha = _RE_FECHA_EN_NOMBRE.search(nombre_sin_ext)
-        if m_fecha:
-            fecha_str = f"{m_fecha.group(1)} de {m_fecha.group(2)} de {m_fecha.group(3)}"
-            fecha_norm = normalizar_fecha(fecha_str)
-            if fecha_norm:
-                meta['fecha_documento'] = fecha_norm
-                meta['anio_norma']      = int(m_fecha.group(3))
-
-    # PASO 2 — Texto (fallback solo para campos aún en None)
-    if not meta['fecha_documento']:
-        m = _RE_FECHA_LARGA.search(texto)
-        if m:
-            fecha = normalizar_fecha(m.group(1))
-            if fecha:
-                meta['fecha_documento'] = fecha
-                meta['anio_norma']      = int(fecha[:4])
-
-    if not meta['fecha_documento']:
-        m = _RE_FECHA_MES_ANIO.search(texto)
-        if m:
-            fecha = normalizar_fecha(f"1 de {m.group(1)} de {m.group(2)}")
-            if fecha:
-                meta['fecha_documento'] = fecha
-                meta['anio_norma']      = int(m.group(2))
-
-    # _TIPOS_NORMA está ordenado: "DECRETO LEGISLATIVO" antes de "DECRETO"
-    if not meta['tipo_norma']:
-        for tipo in _TIPOS_NORMA:
-            if tipo in encabezado:
-                meta['tipo_norma'] = 'RESOLUCIÓN' if tipo == 'RESOLUCION' else tipo
-                break
-
-    if not meta['numero_norma']:
-        m = _RE_NUMERO_NORMA.search(encabezado)
-        if m:
-            meta['numero_norma'] = int(m.group(2))
-        else:
-            m = re.search(r'\b(\d{2,5})\b', encabezado)
-            if m:
-                meta['numero_norma'] = int(m.group(1))
-
-    if not meta['anio_norma']:
-        m = _RE_ANIO.search(encabezado)
-        if m:
-            meta['anio_norma'] = int(m.group(1))
-
-    # PASO 3 — Entidad emisora (siempre desde texto, no está en el nombre)
-    mejor_org = None
-    for ent in nlp(encabezado_original).ents:
-        if ent.label_ == 'ORG':
-            texto_ent = ent.text.strip().upper()
-            if len(texto_ent) > 10 and texto_ent not in _SKIP_ENTIDADES:
-                if mejor_org is None or len(texto_ent) > len(mejor_org):
-                    mejor_org = texto_ent
-    if mejor_org:
-        meta['entidad_emisora'] = mejor_org
-
-    if not meta['entidad_emisora'] and meta.get('tipo_norma') in _ENTIDAD_POR_TIPO:
-        meta['entidad_emisora'] = _ENTIDAD_POR_TIPO[meta['tipo_norma']]
-
-    # PASO 4 — Título (siempre desde texto)
-    for linea in lineas[:50]:
-        if _RE_TITULO.match(linea.strip()):
-            meta['titulo_norma'] = linea.strip()
-            break
-
-    return meta
 
 
 def extraer_temas(nlp: Any, texto: str, top_n: int = 10) -> List[Tuple[str, float]]:
@@ -461,25 +258,56 @@ def normalizar_encabezado_para_ner(texto: str) -> str:
 
 def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
     """
-    Extrae entidades con normalización de encabezado, soporte para documentos
-    largos y métricas de ejecución.
+    Extrae entidades nombradas con normalización de encabezado, soporte para
+    documentos largos y métricas de ejecución.
 
-    Mejoras respecto a extraer_entidades():
-      - Normaliza el encabezado a Title Case antes de procesar con NER.
-      - Divide automáticamente documentos > 800 000 chars en chunks.
-      - Extrae fechas adicionales de las primeras 50 líneas con regex
-        sin duplicar las que ya encontró NER.
-      - Retorna métricas de tiempo y conteo por categoría.
+    Pasos internos:
+      1. Normaliza las primeras 30 líneas a Title Case para mejorar la detección NER
+         (spaCy reconoce mejor ORG/PER con capitalización convencional).
+      2. Si el texto supera 800 000 chars, lo divide en chunks y acumula resultados.
+      3. Complementa las fechas de NER con búsqueda regex en las primeras 50 líneas
+         para capturar fechas que NER frecuentemente omite en encabezados.
 
     Args:
         nlp:   Modelo spaCy cargado.
         texto: Texto completo del documento.
 
     Returns:
-        Tupla (entidades, metricas). entidades tiene la misma estructura
-        que extraer_entidades(). metricas incluye tiempo_ner_segundos y
-        entidades_por_categoria.
+        Tupla (entidades, metricas). entidades es un dict con seis listas:
+        personas, lugares, organizaciones, fechas, leyes, otros.
+        metricas contiene tiempo_ner_segundos y entidades_por_categoria.
     """
+    if nlp is None:
+        raise ValueError("Modelo spaCy no cargado. Ejecuta: python -m spacy download es_core_news_lg")
+
+    def _ner(t: str) -> Dict[str, List[str]]:
+        doc = nlp(t)
+        ents: Dict[str, List[str]] = {
+            'personas': [], 'lugares': [], 'organizaciones': [],
+            'fechas': [], 'leyes': [], 'otros': [],
+        }
+        for ent in doc.ents:
+            texto_ent = ent.text.strip()
+            etiqueta  = ent.label_
+            if etiqueta == 'PER':
+                ents['personas'].append(texto_ent)
+            elif etiqueta in ('LOC', 'GPE'):
+                ents['lugares'].append(texto_ent)
+            elif etiqueta == 'ORG':
+                ents['organizaciones'].append(texto_ent)
+            elif etiqueta == 'DATE':
+                ents['fechas'].append(texto_ent)
+            elif (etiqueta == 'LAW'
+                  or 'ley' in texto_ent.lower()
+                  or 'decreto' in texto_ent.lower()
+                  or 'resolución' in texto_ent.lower()):
+                ents['leyes'].append(texto_ent)
+            else:
+                ents['otros'].append(f"{texto_ent} ({etiqueta})")
+        for key in ents:
+            ents[key] = list(dict.fromkeys(ents[key]))
+        return ents
+
     inicio = time.time()
 
     lineas = texto.split('\n')
@@ -487,14 +315,14 @@ def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
     texto_proc = encabezado_norm + '\n' + '\n'.join(lineas[30:])
 
     if len(texto_proc) <= 800_000:
-        entidades = extraer_entidades(nlp, texto_proc)
+        entidades = _ner(texto_proc)
     else:
         chunks = dividir_en_chunks(texto_proc, 800_000)
         entidades: Dict[str, List[str]] = {
             k: [] for k in ('personas', 'lugares', 'organizaciones', 'fechas', 'leyes', 'otros')
         }
         for chunk in chunks:
-            for key, vals in extraer_entidades(nlp, chunk).items():
+            for key, vals in _ner(chunk).items():
                 entidades[key].extend(vals)
 
     primeras_50 = '\n'.join(lineas[:50])
@@ -522,22 +350,111 @@ def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
 def extraer_metadatos_mejorado(nlp: Any, texto: str,
                                nombre_archivo: str = '') -> Tuple[Dict, Dict]:
     """
-    Extrae metadatos de una norma y calcula métricas de completitud.
+    Extrae metadatos estructurados de una norma colombiana y calcula métricas de completitud.
 
-    Llama internamente a extraer_metadatos_norma() y evalúa los cinco
-    campos clave para reportar qué porcentaje del registro está completo.
+    Estrategia por prioridad:
+      1. Nombre de archivo (fuente primaria): tipo_norma, numero_norma, anio_norma, fecha_documento
+      2. Texto del documento (fallback para campos aún en None)
+      3. NER spaCy sobre primeras 20 líneas → entidad_emisora
+      4. Patrón "Por el/la cual…" en primeras 50 líneas → titulo_norma
 
     Args:
-        nlp:             Modelo spaCy cargado.
-        texto:           Texto completo del documento.
-        nombre_archivo:  Nombre del archivo fuente (opcional, mejora extracción).
+        nlp:            Modelo spaCy cargado.
+        texto:          Texto completo del documento.
+        nombre_archivo: Nombre del archivo fuente (opcional, mejora extracción).
 
     Returns:
-        Tupla (metadatos, metricas). metadatos es el dict de
-        extraer_metadatos_norma(). metricas contiene campos_completos,
-        campos_vacios, completitud_porcentaje y detalle_campos.
+        Tupla (metadatos, metricas). metadatos contiene tipo_norma, numero_norma,
+        anio_norma, entidad_emisora, fecha_documento, titulo_norma.
+        metricas contiene campos_completos, campos_vacios, completitud_porcentaje
+        y detalle_campos.
     """
-    metadatos = extraer_metadatos_norma(nlp, texto, nombre_archivo)
+    if nlp is None:
+        raise ValueError("Modelo spaCy no cargado.")
+
+    lineas              = texto.split('\n')
+    encabezado          = '\n'.join(lineas[:20]).upper()
+    encabezado_original = '\n'.join(lineas[:20])
+
+    metadatos: Dict = {
+        'tipo_norma': None, 'numero_norma': None, 'anio_norma': None,
+        'entidad_emisora': None, 'fecha_documento': None, 'titulo_norma': None,
+    }
+
+    # PASO 1 — Nombre de archivo (fuente prioritaria)
+    if nombre_archivo:
+        nombre_sin_ext = os.path.splitext(nombre_archivo)[0]
+        m = _RE_NOMBRE_ARCHIVO.match(nombre_sin_ext)
+        if m:
+            tipo_raw = m.group(1).upper()
+            metadatos['tipo_norma']   = 'RESOLUCIÓN' if 'RESOLUCI' in tipo_raw else tipo_raw
+            metadatos['numero_norma'] = int(m.group(2))
+            metadatos['anio_norma']   = int(m.group(3))
+        m_fecha = _RE_FECHA_EN_NOMBRE.search(nombre_sin_ext)
+        if m_fecha:
+            fecha_str = f"{m_fecha.group(1)} de {m_fecha.group(2)} de {m_fecha.group(3)}"
+            fecha_norm = normalizar_fecha(fecha_str)
+            if fecha_norm:
+                metadatos['fecha_documento'] = fecha_norm
+                metadatos['anio_norma']      = int(m_fecha.group(3))
+
+    # PASO 2 — Texto (fallback solo para campos aún en None)
+    if not metadatos['fecha_documento']:
+        m = _RE_FECHA_LARGA.search(texto)
+        if m:
+            fecha = normalizar_fecha(m.group(1))
+            if fecha:
+                metadatos['fecha_documento'] = fecha
+                metadatos['anio_norma']      = int(fecha[:4])
+
+    if not metadatos['fecha_documento']:
+        m = _RE_FECHA_MES_ANIO.search(texto)
+        if m:
+            fecha = normalizar_fecha(f"1 de {m.group(1)} de {m.group(2)}")
+            if fecha:
+                metadatos['fecha_documento'] = fecha
+                metadatos['anio_norma']      = int(m.group(2))
+
+    # _TIPOS_NORMA está ordenado: "DECRETO LEGISLATIVO" antes de "DECRETO"
+    if not metadatos['tipo_norma']:
+        for tipo in _TIPOS_NORMA:
+            if tipo in encabezado:
+                metadatos['tipo_norma'] = 'RESOLUCIÓN' if tipo == 'RESOLUCION' else tipo
+                break
+
+    if not metadatos['numero_norma']:
+        m = _RE_NUMERO_NORMA.search(encabezado)
+        if m:
+            metadatos['numero_norma'] = int(m.group(2))
+        else:
+            m = re.search(r'\b(\d{2,5})\b', encabezado)
+            if m:
+                metadatos['numero_norma'] = int(m.group(1))
+
+    if not metadatos['anio_norma']:
+        m = _RE_ANIO.search(encabezado)
+        if m:
+            metadatos['anio_norma'] = int(m.group(1))
+
+    # PASO 3 — Entidad emisora (siempre desde texto, no está en el nombre)
+    mejor_org = None
+    for ent in nlp(encabezado_original).ents:
+        if ent.label_ == 'ORG':
+            texto_ent = ent.text.strip().upper()
+            if len(texto_ent) > 10 and texto_ent not in _SKIP_ENTIDADES:
+                if mejor_org is None or len(texto_ent) > len(mejor_org):
+                    mejor_org = texto_ent
+    if mejor_org:
+        metadatos['entidad_emisora'] = mejor_org
+
+    if not metadatos['entidad_emisora'] and metadatos.get('tipo_norma') in _ENTIDAD_POR_TIPO:
+        metadatos['entidad_emisora'] = _ENTIDAD_POR_TIPO[metadatos['tipo_norma']]
+
+    # PASO 4 — Título (siempre desde texto)
+    for linea in lineas[:50]:
+        if _RE_TITULO.match(linea.strip()):
+            metadatos['titulo_norma'] = linea.strip()
+            break
 
     campos_clave = ('tipo_norma', 'numero_norma', 'anio_norma',
                     'entidad_emisora', 'fecha_documento')

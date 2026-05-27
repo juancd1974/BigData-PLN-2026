@@ -1,8 +1,17 @@
 """
 Registro y persistencia de métricas operacionales del pipeline PLN.
 
-Centraliza la captura de tiempos, calidad de extracción, completitud
-de metadatos y métricas de resumen para comparación entre modelos.
+Centraliza la captura de tiempos, calidad de extracción, completitud de
+metadatos y métricas de resumen para comparación entre modelos.
+
+Cada documento procesado genera un JSON en static/metrics/ con cuatro secciones:
+  extraccion_texto → método (pymupdf/ocr), tiempo, longitud, calidad_ok
+  ner              → tiempo de inferencia, conteo de entidades por categoría
+  metadatos        → campos completos/vacíos y completitud porcentual
+  resumen          → modelo usado, tiempo, chunks, longitud y perplejidad
+
+Usar calcular_resumen_comparativo() para agregar métricas de todos los
+documentos y comparar el rendimiento entre modelos de resumen.
 """
 
 import json
@@ -229,6 +238,8 @@ def calcular_resumen_comparativo() -> Dict:
     calidad_ok_count = 0
     docs_con_extraccion = 0
 
+    # Las claves con prefijo '_' son acumuladores temporales dentro del dict de cada
+    # modelo; se reemplazan por valores calculados en resumen_por_modelo al finalizar.
     for m in todas:
         total_docs += 1
 
