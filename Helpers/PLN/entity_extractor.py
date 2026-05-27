@@ -42,7 +42,7 @@ _RE_NUMERO_NORMA = re.compile(
 
 _RE_ANIO   = re.compile(r'\b(19\d{2}|20\d{2})\b')
 _RE_TITULO = re.compile(
-    r'^por\s+'
+    r'^["\']?\s*por\s+'
     r'(?:el\s+cual|la\s+cual|medio\s+de\s+la\s+cual|medio\s+del\s+cual'
     r'|el\s+que|la\s+que|el\s+presente|la\s+presente)',
     re.IGNORECASE,
@@ -410,6 +410,9 @@ def construir_entity_ruler(nlp: Any) -> Any:
     orgs = [
         "Ministerio de Agricultura y Desarrollo Rural",
         "Ministerio de Agricultura",
+        "Ministerio de Hacienda y Crédito Público",
+        "Ministerio de Comercio Industria y Turismo",
+        "Presidencia de la República",
         "MADR",
         "Contraloría General de la República",
         "Contraloría Delegada para el Sector Agropecuario",
@@ -420,6 +423,10 @@ def construir_entity_ruler(nlp: Any) -> Any:
         "DNP",
         "DANE",
         "Congreso de la República",
+        "El Congreso de Colombia",
+        "Congreso de Colombia",
+        "CONGRESO DE LA REPÚBLICA",
+        "CONGRESO DE COLOMBIA",
     ]
     ruler.add_patterns([{"label": "ORG", "pattern": org} for org in orgs])
     return nlp

@@ -54,6 +54,7 @@ def cargar_pipeline_resumen(modelo_nombre: str = _MODELO_RESUMEN):
     print(f"  Cargando modelo de resumen '{modelo_nombre}'...")
     try:
         tokenizer = AutoTokenizer.from_pretrained(modelo_nombre, use_fast=False, legacy=True)
+        tokenizer.model_max_length = 512
         pipe = pipeline("summarization", model=modelo_nombre, tokenizer=tokenizer, device=device,
                         max_new_tokens=None)
         print(f"  ✓ '{modelo_nombre}' cargado")
@@ -97,6 +98,11 @@ def _resumir_fragmento(pipeline_resumen, fragmento: str,
     min_length_seguro = min(min_length,
                             max(1, tokens_estimados // 2),
                             max_length - 1)
+
+    # Ajustar max_length si el fragmento es más corto que el límite configurado
+    tokens_entrada = len(entrada) // 4
+    if tokens_entrada < max_length:
+        max_length = max(min_length_seguro + 1, tokens_entrada // 2)
 
     resultado = pipeline_resumen(
         entrada,

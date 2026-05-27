@@ -418,77 +418,6 @@
             document.getElementById('texto_btn_cargar').textContent = 'Procesar PLN';
         }
 
-        async function indexarCarpetaLocal(archivosSeleccionados) {
-            const index = document.getElementById('select_index').value;
-            if (!index) { alert('Seleccione un índice'); return; }
-
-            mostrarCargando('Subiendo archivos al servidor...');
-            const formData = new FormData();
-            archivosSeleccionados.forEach(a => formData.append('archivos', a.file, a.nombre));
-
-            let data;
-            try {
-                const resp = await fetch('/subir-pdfs-carpeta', { method: 'POST', body: formData });
-                data = await resp.json();
-            } catch { ocultarCargando(); alert('Error al subir archivos'); return; }
-            ocultarCargando();
-            if (!data.success) { alert('Error al subir: ' + data.error); return; }
-
-            const params    = new URLSearchParams({ ruta: data.ruta, index,
-                                 archivos: data.archivos.map(a => a.nombre).join('|') });
-            const evtSource = new EventSource(`/indexar-carpeta-local?${params}`);
-            setProcesando(true);
-
-            document.getElementById('seccion_progreso').style.display = 'block';
-            document.getElementById('log_progreso').innerHTML = '';
-            document.getElementById('btn_cargar').disabled = true;
-            document.getElementById('seccion_progreso').scrollIntoView({ behavior: 'smooth' });
-
-            evtSource.onmessage = function (e) {
-                const d = JSON.parse(e.data);
-
-                if (d.tipo === 'inicio') {
-                    logLinea(`Iniciando — ${d.total} archivos a procesar`, 'log-progreso');
-
-                } else if (d.tipo === 'progreso') {
-                    document.getElementById('progreso_contador').textContent =
-                        `${d.num} / ${d.total}`;
-                    actualizarEstadoFila(d.num - 1, d.fase, 'warning');
-                    logLinea(`[${d.num}/${d.total}] ${d.archivo}  →  ${d.fase}`, 'log-progreso');
-
-                } else if (d.tipo === 'ok') {
-                    actualizarEstadoFila(d.num - 1, 'Indexado ✓', 'success');
-                    logLinea(`[${d.num}/${d.total}] ${d.archivo}  →  ✓ Indexado`, 'log-ok');
-
-                } else if (d.tipo === 'omitido') {
-                    actualizarEstadoFila(d.num - 1, 'Duplicado', 'secondary');
-                    logLinea(`[${d.num}/${d.total}] ${d.archivo}  →  Omitido (duplicado)`, 'log-omitido');
-
-                } else if (d.tipo === 'error') {
-                    actualizarEstadoFila(d.num - 1, 'Error', 'danger');
-                    logLinea(`[${d.num}/${d.total}] ${d.archivo}  →  ✗ ${d.razon}`, 'log-error');
-
-                } else if (d.tipo === 'fin') {
-                    evtSource.close();
-                    document.getElementById('btn_cargar').disabled = false;
-                    setProcesando(false);
-                    logLinea(`─────────────────────────────────────────────`, '');
-                    logLinea(
-                        `Completado: ${d.indexados} indexados · ${d.omitidos} omitidos · ${d.errores} errores`,
-                        'log-fin'
-                    );
-                    cargarIndices();
-                }
-            };
-
-            evtSource.onerror = function () {
-                evtSource.close();
-                document.getElementById('btn_cargar').disabled = false;
-                setProcesando(false);
-                logLinea('✗ Conexión interrumpida', 'log-error');
-            };
-        }
-
         // ── Cargar seleccionados (ZIP / WebScraping) ─────────────────────────────────
         function cargarSeleccionados() {
             const checkboxes = document.querySelectorAll('.archivo-checkbox:checked');
@@ -498,11 +427,6 @@
             if (!index) { alert('Seleccione un índice'); return; }
 
             const seleccionados = Array.from(checkboxes).map(cb => archivosActuales[parseInt(cb.dataset.index)]);
-
-            if (metodoActual === 'carpeta') {
-                indexarCarpetaLocal(seleccionados);
-                return;
-            }
 
             mostrarCargando('Cargando documentos a ElasticSearch...');
             fetch('/cargar-documentos-elastic', {
@@ -566,6 +490,16 @@
             const units = ['B', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(1024));
             return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i];
+        }
+
+        function normalizar(n) {
+            if (!n) return '';
+            return n
+                .normalize('NFD')
+                .replace(/[̀-ͯ]/g, '')
+                .replace(/[\s_]+/g, '_')
+                .toLowerCase()
+                .replace(/\.pdf$/i, '');
         }
 
         // ── Helpers log ──────────────────────────────────────────────────────────────
@@ -654,7 +588,16 @@
               alert('Error al subir archivos: ' + data.error);
               return;
             }
-            // Ahora los archivos tienen ruta del servidor
+            // Actualizar archivosActuales con nombres del servidor
+            // para que la normalización de badges funcione correctamente
+            data.archivos.forEach(serverArchivo => {
+              const idx = archivosActuales.findIndex(a =>
+                normalizar(a.nombre) === normalizar(serverArchivo.nombre)
+              );
+              if (idx !== -1) {
+                archivosActuales[idx].nombre = serverArchivo.nombre;
+              }
+            });
             procesarFase1(data.archivos);
           } catch(e) {
             ocultarCargando();
@@ -691,6 +634,20 @@
               if (data.tipo === 'fin') {
                 es.close();
                 const resultado = JSON.parse(data.mensaje);
+                // Fallback: actualizar badges de omitidos que no se procesaron por timing del SSE
+                if (resultado.omitidos && resultado.omitidos.length > 0) {
+                  resultado.omitidos.forEach(nombreOmitido => {
+                    const idxOmitido = archivosActuales.findIndex(a =>
+                      normalizar(a.nombre) === normalizar(nombreOmitido)
+                    );
+                    if (idxOmitido !== -1) {
+                      const badge = document.getElementById(`estado_${idxOmitido}`);
+                      if (badge && badge.textContent !== 'Omitido') {
+                        actualizarEstadoFila(idxOmitido, 'Omitido', 'secondary');
+                      }
+                    }
+                  });
+                }
                 if (resultado.resultados.length === 0) {
                   document.getElementById('seccion_progreso').style.display = 'none';
 
@@ -727,6 +684,16 @@
                 'omitido': 'log-warning',
                 'info':    'log-info',
               }[data.tipo] || 'log-info';
+
+              if (data.tipo === 'omitido') {
+                const nombreOmitido = data.mensaje.split('→')[0].trim();
+                const idxOmitido = archivosActuales.findIndex(a =>
+                  normalizar(a.nombre) === normalizar(nombreOmitido)
+                );
+                if (idxOmitido !== -1) {
+                  actualizarEstadoFila(idxOmitido, 'Omitido', 'secondary');
+                }
+              }
 
               logLinea(data.mensaje, clase);
             };
@@ -947,9 +914,8 @@
               document.querySelectorAll('.alerta-sin-nuevos').forEach(el => el.remove());
               // Actualizar estado de archivos procesados a "Indexado"
               resultadosFase1.forEach((r) => {
-                const idx = archivosActuales.findIndex(
-                  a => a.nombre === r.nombre ||
-                       a.nombre === r.nombre.replace(/_/g, ' ')
+                const idx = archivosActuales.findIndex(a =>
+                  normalizar(a.nombre) === normalizar(r.nombre)
                 );
                 if (idx !== -1) actualizarEstadoFila(idx, 'Indexado', 'success');
               });
