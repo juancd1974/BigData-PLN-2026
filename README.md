@@ -135,6 +135,14 @@ python app.py
 
 ---
 
+## Documentación
+
+- [Guía de instalación](INSTALLATION_GUIDE.md)
+- [Manual de usuario](USER_GUIDE.md)
+- [Manual de administrador](ADMIN_GUIDE.md)
+
+---
+
 ## Flujo de uso
 
 1. **Autenticación** — Iniciar sesión con un usuario administrador desde `/login`.
