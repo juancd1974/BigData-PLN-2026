@@ -37,7 +37,7 @@
   "configuracion_activa": {
     "summarizer_activo": "mt5_small",
     "modo_comparacion": true,
-    "modelo_fase1": "mt5_small",
-    "modelo_fase2": "mt5_base_spanish"
+    "modelo_fase1": "mt5_base_spanish",
+    "modelo_fase2": "mt5_small"
   }
 }
