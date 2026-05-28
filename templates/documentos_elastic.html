@@ -26,6 +26,14 @@
         .log-titulo  { color: #79c0ff; font-weight: bold; }
         .log-warning { color: #f0ad4e; }
         .log-info    { color: #d4d4d4; }
+        #comparacion_documentos .form-check-input[type="radio"] {
+            border: 2px solid #8aa8c8;
+            background-color: #ffffff;
+        }
+        #comparacion_documentos .form-check-input[type="radio"]:checked {
+            background-color: #0d6efd;
+            border-color: #0d6efd;
+        }
         #log_fase2 {
             background: #1e1e1e;
             color: #d4d4d4;
@@ -56,7 +64,7 @@
         </div>
     </header>
 
-    <main class="main_2">
+    <main class="main">
         <div class="container mt-4">
             <h1 class="h3 mb-4">Cargar Documentos a ElasticSearch</h1>
 
@@ -213,7 +221,7 @@
             <div id="seccion_fase1" style="display:none">
               <div class="card mb-4 buscador_1">
                 <div class="card-header">
-                  <strong>5. Resultados con mT5-small</strong>
+                  <strong>5. Resultados con {{ modelo_fase1_nombre }}</strong>
                 </div>
                 <div class="card-body">
                   <div class="table-responsive mb-3">
@@ -237,7 +245,7 @@
                     </button>
                     <button class="btn btn-primary boton_buscar"
                             id="btn_fase2" onclick="iniciarFase2()">
-                      Sí, comparar con mT5-base
+                      Sí, comparar con {{ modelo_fase2_nombre }}
                     </button>
                   </div>
                 </div>
@@ -248,7 +256,7 @@
             <div id="seccion_progreso_fase2" style="display:none">
               <div class="card mb-4 buscador_1">
                 <div class="card-header">
-                  <strong>6. Procesando con mT5-base...</strong>
+                  <strong>6. Procesando con {{ modelo_fase2_nombre }}...</strong>
                 </div>
                 <div class="card-body p-2">
                   <div id="log_fase2"></div>
@@ -265,12 +273,12 @@
                           a indexar</strong>
                   <div class="d-flex gap-2">
                     <button class="btn btn-sm btn-outline-primary"
-                            onclick="seleccionarTodosModelo('small')">
-                      Todos mT5-small
+                            onclick="seleccionarTodosModelo('fase1')">
+                      Todos {{ modelo_fase1_nombre }}
                     </button>
                     <button class="btn btn-sm btn-outline-primary"
-                            onclick="seleccionarTodosModelo('base')">
-                      Todos mT5-base
+                            onclick="seleccionarTodosModelo('fase2')">
+                      Todos {{ modelo_fase2_nombre }}
                     </button>
                   </div>
                 </div>
@@ -315,6 +323,8 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script>
     <script>
         // ── Estado global ────────────────────────────────────────────────────────────
+        const MODELO_FASE1 = "{{ modelo_fase1_nombre }}";
+        const MODELO_FASE2 = "{{ modelo_fase2_nombre }}";
         let archivosActuales = [];
         let metodoActual = 'carpeta';
         let procesandoActivo = false;
@@ -612,8 +622,9 @@
           const index = document.getElementById('select_index').value;
           document.getElementById('seccion_fase1').style.display = 'none';
           document.getElementById('seccion_progreso').style.display = 'block';
+          document.getElementById('seccion_progreso').scrollIntoView({ behavior: 'smooth' });
           document.getElementById('log_progreso').innerHTML = '';
-          logLinea('Iniciando procesamiento con mT5-small...', 'log-info');
+          logLinea(`Iniciando procesamiento con ${MODELO_FASE1}...`, 'log-info');
 
           const params = new URLSearchParams({
             archivos: JSON.stringify(archivos.map(a => ({
@@ -724,7 +735,7 @@
 
           const msg = document.getElementById('estimacion_fase2_msg');
           if (estimacion) {
-            msg.textContent = `¿Comparar con mT5-base? ${estimacion.mensaje} adicionales.`;
+            msg.textContent = `¿Comparar con ${MODELO_FASE2}? ${estimacion.mensaje} adicionales.`;
           }
         }
 
@@ -795,7 +806,7 @@
 
           // Deshabilitar botón "Todos mT5-base" si no hay fase2
           const btnTodosBase = document.querySelector(
-            'button[onclick="seleccionarTodosModelo(\'base\')"]'
+            'button[onclick="seleccionarTodosModelo(\'fase2\')"]'
           );
           if (btnTodosBase) {
             btnTodosBase.disabled = resultadosFase2.length === 0;
@@ -812,11 +823,11 @@
                   <div class="col-md-6">
                     <div class="form-check mb-2">
                       <input class="form-check-input" type="radio"
-                             name="modelo_${i}" value="small"
-                             id="small_${i}" checked>
+                             name="modelo_${i}" value="fase1"
+                             id="fase1_${i}" checked>
                       <label class="form-check-label fw-bold"
-                             for="small_${i}">
-                        mT5-small
+                             for="fase1_${i}">
+                        ${MODELO_FASE1}
                         <span class="badge bg-secondary ms-1">
                           Perpl: ${r1.perplexidad_small === -1 ? 'N/A' : r1.perplexidad_small}
                         </span>
@@ -833,11 +844,11 @@
                     ${r2 ? `
                     <div class="form-check mb-2">
                       <input class="form-check-input" type="radio"
-                             name="modelo_${i}" value="base"
-                             id="base_${i}">
+                             name="modelo_${i}" value="fase2"
+                             id="fase2_${i}">
                       <label class="form-check-label fw-bold"
-                             for="base_${i}">
-                        mT5-base
+                             for="fase2_${i}">
+                        ${MODELO_FASE2}
                         <span class="badge bg-primary ms-1">
                           Perpl: ${r2.perplexidad_base === -1 ? 'N/A' : r2.perplexidad_base}
                         </span>
@@ -851,11 +862,11 @@
                     </p>
                     ` : `<div class="form-check mb-2">
                            <input class="form-check-input" type="radio"
-                                  name="modelo_${i}" value="base"
-                                  id="base_${i}" disabled>
+                                  name="modelo_${i}" value="fase2"
+                                  id="fase2_${i}" disabled>
                            <label class="form-check-label text-muted"
-                                  for="base_${i}">
-                             mT5-base <span class="badge bg-secondary">
+                                  for="fase2_${i}">
+                             ${MODELO_FASE2} <span class="badge bg-secondary">
                              No procesado</span>
                            </label>
                          </div>
@@ -882,7 +893,7 @@
             const radio = document.querySelector(
               `input[name="modelo_${i}"]:checked`
             );
-            const modeloElegido = radio ? radio.value : 'small';
+            const modeloElegido = radio ? radio.value : 'fase1';
             const r2 = resultadosFase2.find(r => r.nombre === r1.nombre);
             return {
               documento: r1.documento,

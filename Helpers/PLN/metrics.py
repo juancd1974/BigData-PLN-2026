@@ -256,31 +256,54 @@ def calcular_resumen_comparativo() -> Dict:
     # por valores calculados en resumen_por_modelo al finalizar.
     por_modelo: Dict[str, Dict] = {}
 
+    # En modo comparación, el mismo documento genera dos archivos de métricas:
+    # {hash}_{modelo_fase1}.json y {hash}_{modelo_fase2}.json. Estos sets garantizan
+    # que cada documento físico se cuente exactamente una vez en los contadores de
+    # extracción y metadatos, independientemente de cuántos archivos existan para él.
+    _hashes_extraccion = set()
+    _hashes_metadatos  = set()
+
     for m in todas:
-        # Extracción
+        # Extracción:
+        # · calidad_ok is None → registro de fase 2. procesar_fase2() inicializa un
+        #   nuevo dict de métricas sin llamar a registrar_extraccion_texto(), dejando
+        #   calidad_ok = None. Sin este guard, None (falsy) caería en "else: fallidos"
+        #   e inflaría el contador aunque el documento se haya indexado correctamente.
+        # · Deduplicación por hash: evita doble conteo cuando fase 1 y fase 2 del mismo
+        #   documento generan dos archivos de métricas con distinto nombre de modelo.
         extraccion = m.get("extraccion_texto", {})
         calidad_ok = extraccion.get("calidad_ok")
-        metodo = extraccion.get("metodo")
-        if calidad_ok:
-            if metodo == "pymupdf":
-                exitosos_pymupdf += 1
-            elif metodo == "ocr":
-                exitosos_ocr += 1
-        else:
-            fallidos += 1
+        if calidad_ok is not None:
+            hash_doc = m.get("hash_archivo", "")
+            if hash_doc not in _hashes_extraccion:
+                _hashes_extraccion.add(hash_doc)
+                metodo = extraccion.get("metodo")
+                if calidad_ok:
+                    if metodo == "pymupdf":
+                        exitosos_pymupdf += 1
+                    elif metodo == "ocr":
+                        exitosos_ocr += 1
+                else:
+                    fallidos += 1
 
-        # Metadatos
+        # Metadatos — deduplicar por hash.
+        # procesar_fase2() puede copiar detalle_campos de fase 1 al archivo de fase 2
+        # si recibe completitud_metadatos. Sin deduplicación, total_docs_meta y los
+        # contadores por campo se incrementarían dos veces para el mismo documento.
         meta = m.get("metadatos", {})
         detalle = meta.get("detalle_campos")
         if detalle is not None:
-            total_docs_meta += 1
-            for campo in _campos_objetivo:
-                _campo_counts[campo]['total'] += 1
-                if detalle.get(campo):
-                    _campo_counts[campo]['completos'] += 1
-            completitud = meta.get("completitud_porcentaje")
-            if completitud is not None:
-                _completitudes.append(completitud)
+            hash_doc = m.get("hash_archivo", "")
+            if hash_doc not in _hashes_metadatos:
+                _hashes_metadatos.add(hash_doc)
+                total_docs_meta += 1
+                for campo in _campos_objetivo:
+                    _campo_counts[campo]['total'] += 1
+                    if detalle.get(campo):
+                        _campo_counts[campo]['completos'] += 1
+                completitud = meta.get("completitud_porcentaje")
+                if completitud is not None:
+                    _completitudes.append(completitud)
 
         # Resumen por modelo
         res = m.get("resumen", {})

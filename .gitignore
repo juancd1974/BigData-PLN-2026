@@ -122,3 +122,8 @@ static/temp/*
 # Codeium
 .codeium/
 
+# =============================================================
+# Modelos Word2Vec entrenados (archivos grandes, se regeneran con entrenar_word2vec)
+# =============================================================
+models/
+

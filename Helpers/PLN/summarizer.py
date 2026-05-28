@@ -94,6 +94,9 @@ def _resumir_fragmento(pipeline_resumen, fragmento: str,
         String con el resumen generado.
     """
     modelo_id = pipeline_resumen.model.config.name_or_path.lower()
+    # mT5/T5 son modelos text-to-text: requieren un prefijo de tarea que indica al
+    # decoder qué secuencia generar. 'summarize: ' es el prefijo estándar de T5 para
+    # resumen. Modelos sin 't5' en el nombre (ej. BART) usan el texto directamente.
     entrada = f"summarize: {fragmento}" if 't5' in modelo_id else fragmento
 
     # Estimar tokens del fragmento (aproximación: 1 token ≈ 4 chars)
@@ -189,10 +192,14 @@ def generar_resumen_con_metricas(pipeline_resumen,
     inicio = time.time()
     num_chunks = max(1, math.ceil(len(texto) / chunk_chars))
 
+    # Normalización mínima: NFC + control chars + espacios. Se preservan números,
+    # puntuación y capitalización para que SentencePiece construya subword units
+    # coherentes. limpiar_texto() (minúsculas + charset español) degradaría la calidad.
     texto_limpio = preprocesar_para_transformer(texto)
     if not texto_limpio or len(texto_limpio.strip()) < 50:
         return "", {}
 
+    # Mínimo 100 chars: descarta chunks triviales (encabezados sueltos, páginas en blanco) que generarían resúmenes vacíos o incoherentes.
     chunks_validos = [
         c for c in (texto_limpio[i:i + chunk_chars]
                     for i in range(0, len(texto_limpio), chunk_chars))

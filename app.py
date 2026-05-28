@@ -67,43 +67,10 @@ def buscar_elastic():
     try:
         data = request.get_json()
         texto_buscar = data.get('texto', '').strip()
-        #campo = data.get('campo', '_all') # _opciones (traidos de un select del formulario): titulo, contenido, autor, fecha_creacion
-        #campo = 'texto'
         pagina = int(data.get("pagina", 1))
         tamano_pagina = int(data.get("tamano_pagina", 20))
-        
-        '''
-        if not texto_buscar:
-            return jsonify({
-                'success': False,
-                'error': 'Texto de búsqueda es requerido'
-            }), 400
-        
-        # Definir aggregations/filtros
-        query_base= {"query": {
-                            "match": {
-                                campo: texto_buscar
-                            }
-                        } 
-                    }
-        aggs = {
-            "por_tipo_norma": {
-                "terms": {"field": "tipo_norma.keyword"}
-            },
-            "por_anio": {
-                "terms": {"field": "anio_norma"}
-            },
-            "por_entidad": {
-                "terms": {"field": "entidad_emisora.keyword"}
-            },
-            "por_tema": {
-                "terms": {"field": "temas.palabra.keyword"}
-            }
-        }
-        '''
 
         query_base = {
-            "from": (pagina - 1) * tamano_pagina,
             "query": {
                 "bool": {
                     "must": [
@@ -194,17 +161,27 @@ def buscar_elastic():
 
 
         # Ejecutar búsqueda sobre elastic
+        # Pool de 100 para re-ranking semántico: recuperar solo tamano_pagina documentos
+        # limitaría el re-ranking a los primeros N resultados BM25, perdiendo candidatos
+        # que el modelo semántico podría rankear mejor. Con 100 docs, buscar_conceptual()
+        # reordena por similitud coseno sobre un conjunto representativo de la búsqueda.
         resultado = elastic.buscar(
             index=ELASTIC_INDEX_DEFAULT,
             query=query_base,
             aggs=aggs,
-            size=tamano_pagina
+            size=100
         )
 
         if resultado.get('success') and resultado.get('resultados'):
-            resultado['resultados'] = pln_busqueda.buscar_conceptual(
+            reranked = pln_busqueda.buscar_conceptual(
                 texto_buscar, resultado['resultados'], campo_texto='texto'
             )
+            # Paginación en Python sobre el pool re-rankeado: el 'from' de Elasticsearch
+            # ya no aplica porque el orden cambió tras el re-ranking semántico. Se pagina
+            # sobre la lista reranked con aritmética de índice, preservando la semántica
+            # de página/tamano_pagina. Límite real: pagina * tamano_pagina <= 100.
+            inicio = (pagina - 1) * tamano_pagina
+            resultado['resultados'] = reranked[inicio : inicio + tamano_pagina]
 
         return jsonify(resultado)
         
@@ -337,6 +314,7 @@ def login():
 
 @app.route('/listar-usuarios')
 def listar_usuarios():
+    """API que retorna todos los usuarios registrados en MongoDB."""
     try:
 
         usuarios = mongo.listar_usuarios(MONGO_COLECCION)
@@ -536,6 +514,7 @@ def ejecutar_query_elastic():
 
 @app.route('/ejecutar-dml-elastic', methods=['POST'])
 def ejecutar_dml_elastic():
+    """API para ejecutar operaciones DML (crear, actualizar, eliminar) en Elasticsearch."""
     try:
         if not session.get('logged_in'):
             return jsonify({'success': False, 'error': 'No autorizado'}), 401
@@ -567,7 +546,18 @@ def cargar_doc_elastic():
         flash('No tiene permisos para cargar datos a ElasticSearch', 'danger')
         return redirect(url_for('admin'))
     
-    return render_template('documentos_elastic.html', usuario=session.get('usuario'), permisos=permisos, version=VERSION_APP, creador=CREATOR_APP)
+    # Lee el nombre de display de cada modelo para pasarlo al template; el HTML no tiene acceso directo a la configuración JSON.
+    cfg = pipeline.cargar_config_modelos()
+    cfg_activa = cfg.get('configuracion_activa', {})
+    summarizers = {m['id']: m['nombre'] for m in cfg.get('summarizer', [])}
+    modelo_fase1_nombre = summarizers.get(cfg_activa.get('modelo_fase1', ''), 'Fase 1')
+    modelo_fase2_nombre = summarizers.get(cfg_activa.get('modelo_fase2', ''), 'Fase 2')
+
+    return render_template('documentos_elastic.html',
+                           usuario=session.get('usuario'), permisos=permisos,
+                           version=VERSION_APP, creador=CREATOR_APP,
+                           modelo_fase1_nombre=modelo_fase1_nombre,
+                           modelo_fase2_nombre=modelo_fase2_nombre)
 
 @app.route('/procesar-zip-elastic', methods=['POST'])
 def procesar_zip_elastic():
@@ -922,6 +912,7 @@ def guardar_configuracion():
             config_activa[campo] = data[campo]
 
     summarizer_activo = config_activa.get('summarizer_activo')
+    # Resuelve el modelo_hf del summarizer activo para devolverlo al frontend; el panel muestra el nombre real del modelo, no solo su ID interno.
     modelo_hf = next(
         (m.get('modelo_hf', 'google/mt5-small') for m in config.get('summarizer', [])
          if m.get('id') == summarizer_activo),
@@ -953,6 +944,7 @@ def metricas_vista():
         except Exception:
             evaluaciones_precision = []
 
+    # Promedios globales de P@5 para el panel; diferencia positiva indica cuánto mejora la búsqueda semántica sobre BM25 puro.
     ev_bm25_avg = ev_sem_avg = ev_diff_avg = 0.0
     if evaluaciones_precision:
         n_ev        = len(evaluaciones_precision)
@@ -1020,7 +1012,7 @@ def evaluar_precision():
         resultado = elastic.buscar(
             index=ELASTIC_INDEX_DEFAULT,
             query=query_base,
-            size=max(n * 4, 20)
+            size=100
         )
         if not resultado.get('success'):
             return jsonify({'success': False, 'error': resultado.get('error', 'Error ES')}), 500
@@ -1052,6 +1044,7 @@ def guardar_evaluacion():
         if not consulta:
             return jsonify({'success': False, 'error': 'Consulta vacía'}), 400
 
+        # P@5: fracción de los primeros 5 resultados marcados como relevantes por el usuario (True/False); máximo 1.0.
         bm25_p5 = round(sum(1 for r in bm25_rel if r) / 5, 2)
         sem_p5  = round(sum(1 for r in sem_rel  if r) / 5, 2)
 
@@ -1091,6 +1084,8 @@ def procesar_fase1():
     if not session.get('permisos', {}).get('admin_data_elastic'):
         return jsonify({'success': False, 'error': 'Sin permisos'}), 403
 
+    # request.args debe leerse FUERA de generate(): dentro del generator SSE el
+    # contexto de petición Flask puede no estar activo, causando RuntimeError.
     archivos_json = request.args.get('archivos', '[]')
     index         = request.args.get('index', '')
 
@@ -1103,6 +1098,10 @@ def procesar_fase1():
         return jsonify({'success': False,
                        'error': 'Archivos e índice son requeridos'}), 400
 
+    # Patrón SSE (Server-Sent Events): generate() es un generator que yield-ea eventos
+    # JSON con formato "data: {...}\n\n". Flask hace streaming de cada yield al cliente
+    # (EventSource en JS) sin esperar al final del procesamiento, mostrando progreso
+    # en tiempo real durante el pipeline PLN (extracción, NER, resumen, etc.).
     def generate():
         def evento(tipo, mensaje):
             yield f"data: {json.dumps({'tipo': tipo, 'mensaje': mensaje})}\n\n"
@@ -1140,6 +1139,7 @@ def procesar_fase1():
             hash_archivo = archivo.get('hash_archivo', '')
 
             yield from evento('archivo', f'[{i}/{total}] {nombre}')
+            print(f'[Fase 1] [{i}/{total}] {nombre}')
 
             doc, metricas_doc = pipeline.procesar_fase1(
                 ruta, nombre, hash_archivo, pln_busqueda
@@ -1197,7 +1197,7 @@ def procesar_fase1():
 
 @app.route('/procesar-fase2')
 def procesar_fase2():
-    """Ejecuta fase 2 del pipeline (mT5-base) con progreso SSE."""
+    """Ejecuta fase 2 del pipeline con el modelo de Fase 2 configurado, con progreso SSE."""
     if not session.get('logged_in'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     if not session.get('permisos', {}).get('admin_data_elastic'):
@@ -1208,6 +1208,14 @@ def procesar_fase2():
         archivos = json.loads(archivos_json)
     except Exception:
         archivos = []
+
+    cfg = pipeline.cargar_config_modelos()
+    # Nombre de display del modelo de fase 2 para los mensajes SSE; se resuelve antes de generate() para que quede capturado en el cierre.
+    _nombre_fase2 = next(
+        (m['nombre'] for m in cfg.get('summarizer', [])
+         if m['id'] == cfg.get('configuracion_activa', {}).get('modelo_fase2')),
+        'Fase 2'
+    )
 
     def generate():
         def evento(tipo, mensaje):
@@ -1222,6 +1230,7 @@ def procesar_fase2():
             metricas_meta = archivo.get('completitud_metadatos') or {}
 
             yield from evento('archivo', f'[{i}/{total}] {nombre}')
+            print(f'[Fase 2] [{i}/{total}] {nombre}')
             yield from evento('info', '  → Cargando texto temporal...')
 
             texto = pipeline.cargar_texto_temporal(hash_archivo)
@@ -1232,7 +1241,7 @@ def procesar_fase2():
 
             yield from evento('ok',
                 f'  → Texto cargado ({len(texto)} chars)')
-            yield f"data: {json.dumps({'tipo': 'info', 'mensaje': '  → Generando resumen con mT5-base (puede tardar)...'})}\n\n"
+            yield from evento('info', f'  → Generando resumen con {_nombre_fase2} (puede tardar)...')
 
             resumen_base, metricas_doc = pipeline.procesar_fase2(
                 texto, nombre, hash_archivo, pln_busqueda,
@@ -1245,7 +1254,7 @@ def procesar_fase2():
             perplexidad_base = res.get('perplexidad', '?')
 
             yield from evento('ok',
-                f'  → mT5-base: {num_chunks} segmentos, '
+                f'  → {_nombre_fase2}: {num_chunks} segmentos, '
                 f'{tiempo_base}s, perpl: {perplexidad_base}')
 
             resultados.append({
@@ -1269,7 +1278,7 @@ def procesar_fase2():
 
 @app.route('/indexar-seleccionados', methods=['POST'])
 def indexar_seleccionados():
-    """API que indexa documentos usando el resumen elegido (small o base)."""
+    """API que indexa documentos usando el resumen elegido (fase1 o fase2)."""
     if not session.get('logged_in'):
         return jsonify({'success': False, 'error': 'No autorizado'}), 401
     if not session.get('permisos', {}).get('admin_data_elastic'):
@@ -1282,21 +1291,29 @@ def indexar_seleccionados():
     if not documentos or not index:
         return jsonify({'success': False, 'error': 'Documentos e índice son requeridos'}), 400
 
-    _MODELO_HF = {'small': 'google/mt5-small', 'base': 'google/mt5-base'}
+    cfg = pipeline.cargar_config_modelos()
+    cfg_activa = cfg.get('configuracion_activa', {})
+    summarizers_hf = {m['id']: m.get('modelo_hf', '') for m in cfg.get('summarizer', [])}
+    # Mapea fase1/fase2 al modelo_hf real para registrarlo en el documento indexado: permite saber qué modelo generó el resumen en cada versión.
+    _MODELO_HF = {
+        'fase1': summarizers_hf.get(cfg_activa.get('modelo_fase1', ''), 'google/mt5-small'),
+        'fase2': summarizers_hf.get(cfg_activa.get('modelo_fase2', ''), 'google/mt5-base'),
+    }
     docs_a_indexar = []
 
     for item in documentos:
         doc           = item.get('documento') or {}
-        eleccion      = item.get('resumen_elegido', 'small')
+        eleccion      = item.get('resumen_elegido', 'fase1')
         resumen_small = item.get('resumen_small', '')
         resumen_base  = item.get('resumen_base', '')
 
-        doc['resumen']        = resumen_base if eleccion == 'base' else resumen_small
-        doc['modelo_resumen'] = _MODELO_HF.get(eleccion, 'google/mt5-small')
+        doc['resumen']        = resumen_base if eleccion == 'fase2' else resumen_small
+        doc['modelo_resumen'] = _MODELO_HF.get(eleccion, _MODELO_HF['fase1'])
         docs_a_indexar.append(doc)
 
     resultado = elastic.indexar_bulk(index, docs_a_indexar)
 
+    # Elimina los JSONs de texto en static/temp/ ya que el documento fue indexado y el texto puede ocupar varios MB por archivo.
     for doc_data in documentos:
         hash_a = (doc_data.get('documento') or {}).get('hash_archivo')
         if hash_a:

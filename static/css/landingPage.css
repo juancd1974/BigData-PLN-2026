@@ -37,6 +37,11 @@ body {
     padding: 1rem 0;
     width: 100%;
     box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 1030;
 }
 
 .header .container {
@@ -75,45 +80,11 @@ body {
 /* ── Main — página principal ─────────────────────────────────────────────────── */
 .main {
     background-color: var(--fondo-pagina);
-    padding: 3rem 0;
+    padding: 4.5rem 0 2rem;
     flex: 1;
 }
 
 .main .container {
-    background-color: var(--fondo-card);
-    width: 80%;
-    max-width: 900px;
-    margin: 0 auto;
-    padding: 2rem;
-    border-radius: 10px;
-    border: 1px solid var(--borde);
-    box-shadow: var(--sombra);
-}
-
-.main .container h1 {
-    font-size: 1.9rem;
-    color: var(--azul-marino);
-    text-align: center;
-    line-height: 1.5;
-    font-weight: 700;
-}
-
-.main .container p {
-    font-size: 1.05rem;
-    color: var(--texto-secundario);
-    text-align: justify;
-    line-height: 1.7;
-    margin-top: 1rem;
-}
-
-/* ── Main 2 — páginas internas ──────────────────────────────────────────────── */
-.main_2 {
-    background-color: var(--fondo-pagina);
-    padding: 2rem 0;
-    flex: 1;
-}
-
-.main_2 .container {
     background-color: var(--fondo-card);
     width: 90%;
     max-width: 960px;
@@ -124,15 +95,23 @@ body {
     box-shadow: var(--sombra);
 }
 
-.main_2 .container h1 {
+.main .container h1 {
     font-size: 1.7rem;
     color: var(--azul-marino);
     text-align: center;
-    font-weight: 700;
     line-height: 1.5;
+    font-weight: 700;
 }
 
-.main_2 .container h3 {
+.main .container p {
+    font-size: 1rem;
+    color: var(--texto-secundario);
+    text-align: justify;
+    line-height: 1.7;
+    margin-top: 1rem;
+}
+
+.main .container h3 {
     font-size: 1.3rem;
     color: var(--azul-marino);
     text-align: center;
@@ -141,7 +120,7 @@ body {
     margin-top: 1rem;
 }
 
-.main_2 .container h4 {
+.main .container h4 {
     font-size: 1.15rem;
     color: var(--texto-principal);
     text-align: center;
@@ -149,19 +128,11 @@ body {
     margin-top: 1rem;
 }
 
-.main_2 .container h5 {
+.main .container h5 {
     font-size: 1.05rem;
     color: var(--texto-principal);
     text-align: center;
     font-weight: 600;
-    margin-top: 1rem;
-}
-
-.main_2 .container p {
-    font-size: 1rem;
-    color: var(--texto-secundario);
-    text-align: justify;
-    line-height: 1.7;
     margin-top: 1rem;
 }
 

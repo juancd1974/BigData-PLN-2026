@@ -237,7 +237,13 @@ def vectorizar_texto(texto: str,
     Returns:
         np.ndarray de forma (vector_size,) o None si no hay tokens vectorizables.
     """
-    # ── Rama spaCy fallback ───────────────────────────────────────────────
+    # ── Rama spaCy / GloVe fallback ──────────────────────────────────────
+    # Se activa en dos casos:
+    # 1) GENSIM_DISPONIBLE=False: gensim no pudo compilar extensiones Cython (ej. Windows
+    #    sin MSVC Build Tools). es_core_news_lg incluye vectores GloVe de 300 dim/token.
+    # 2) modelo is None: Word2Vec aún no entrenado o no cargado en esta sesión.
+    # Ambas ramas usan la misma fórmula de promedio y calcular_similitud_coseno,
+    # que es invariante a la dimensión (100-dim W2V ó 300-dim GloVe).
     if not GENSIM_DISPONIBLE or modelo is None:
         if nlp is None:
             return None
@@ -349,6 +355,9 @@ def buscar_documentos_conceptuales(query: str,
 
     vector_query = vectorizar_texto(query, modelo, nlp)
 
+    # Si la query es completamente OOV (todos los tokens fuera del vocabulario), no hay
+    # vector de referencia. Se conserva el orden BM25 original (orden Elasticsearch)
+    # en lugar de retornar error, ya que BM25 sigue siendo un ranking útil.
     if vector_query is None:
         print(f"  [!] Query '{query[:60]}' sin tokens vectorizables. Usando orden BM25.")
         for doc in documentos_elastic:

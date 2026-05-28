@@ -58,7 +58,11 @@ _RE_FECHA_MES_ANIO = re.compile(
     r'|octubre|noviembre|diciembre)\s+(?:de\s+|del\s+)?(\d{4})\b',
     re.IGNORECASE,
 )
+# spaCy clasifica 'Colombia' y 'República de Colombia' como ORG en algunos contextos.
+# Estas cadenas no corresponden a entidades emisoras útiles para los documentos normativos.
 _SKIP_ENTIDADES = frozenset({'REPÚBLICA DE', 'REPÚBLICA DE COLOMBIA', 'COLOMBIA'})
+# Emisores implícitos: para ciertos tipos de norma el emisor no aparece en el texto
+# pero es conocido y constante. Se usa como fallback si NER no encuentra ninguna ORG.
 _ENTIDAD_POR_TIPO = {
     'CONPES': 'CONSEJO NACIONAL DE POLÍTICA ECONÓMICA Y SOCIAL',
 }
@@ -244,6 +248,7 @@ def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
                 ents['leyes'].append(texto_ent)
             else:
                 ents['otros'].append(f"{texto_ent} ({etiqueta})")
+        # dict.fromkeys() deduplica preservando el orden de primera aparición; set() lo haría pero reordenaría aleatoriamente.
         for key in ents:
             ents[key] = list(dict.fromkeys(ents[key]))
         return ents
@@ -251,6 +256,10 @@ def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
     inicio = time.time()
 
     lineas = texto.split('\n')
+    # Solo se normaliza el encabezado (primeras 30 líneas): los documentos normativos
+    # colombianos frecuentemente tienen el título y tipo en MAYÚSCULAS, lo que confunde
+    # NER (entrenado sobre noticias con capitalización convencional). El resto del texto
+    # (líneas 30+) se pasa sin modificar para no perder contexto semántico.
     encabezado_norm = normalizar_encabezado_para_ner(texto)
     texto_proc = encabezado_norm + '\n' + '\n'.join(lineas[30:])
 
@@ -265,6 +274,9 @@ def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
             for key, vals in _ner(chunk).items():
                 entidades[key].extend(vals)
 
+    # NER omite frecuentemente fechas en encabezados all-caps o con formato poco común.
+    # Se complementa con regex sobre las primeras 50 líneas para capturar '26 de marzo
+    # de 2019' y variantes 'mes de año' que aparecen en el encabezado normativo.
     primeras_50 = '\n'.join(lineas[:50])
     fechas_ner = set(entidades['fechas'])
     for m in _RE_FECHA_LARGA.finditer(primeras_50):
@@ -275,6 +287,7 @@ def extraer_entidades_mejorado(nlp: Any, texto: str) -> Tuple[Dict, Dict]:
         if candidata not in fechas_ner:
             entidades['fechas'].append(candidata)
 
+    # dict.fromkeys() deduplica preservando el orden de primera aparición; set() lo haría pero reordenaría aleatoriamente.
     for key in entidades:
         entidades[key] = list(dict.fromkeys(entidades[key]))
 
@@ -377,6 +390,7 @@ def extraer_metadatos_mejorado(nlp: Any, texto: str,
             metadatos['anio_norma'] = int(m.group(1))
 
     # PASO 3 — Entidad emisora (siempre desde texto, no está en el nombre)
+    # Heurística "más larga gana": "Ministerio de Agricultura y Desarrollo Rural" es más informativo que "Ministerio".
     mejor_org = None
     for ent in nlp(encabezado_original).ents:
         if ent.label_ == 'ORG':

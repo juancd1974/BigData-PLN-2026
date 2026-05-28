@@ -98,9 +98,28 @@ def construir_entity_ruler(nlp: Any) -> Any:
 
 
 class PLN:
-    """Orquestador de NLP sobre normatividad colombiana en español."""
+    """
+    Orquestador de NLP para normatividad colombiana en español.
+
+    Gestiona el ciclo de vida de tres modelos con estrategias de carga distintas:
+    - spaCy (es_core_news_lg): carga en __init__, siempre disponible.
+    - Word2Vec / GloVe:        carga explícita vía cargar_word2vec(); None si no se invoca.
+    - mT5 (pipeline resumen):  None = no intentado aún, False = intentado y falló.
+
+    Es una fachada que delega en los módulos especializados (text_preprocessing,
+    entity_extractor, vector_search, summarizer). No gestiona archivos, métricas
+    ni persistencia — esas responsabilidades están en pipeline.py.
+    """
 
     def __init__(self, modelo_spacy: str = 'es_core_news_lg', cargar_modelos: bool = True):
+        """
+        Inicializa el orquestador de NLP.
+
+        Args:
+            modelo_spacy:   Identificador del modelo spaCy a cargar (debe estar instalado).
+            cargar_modelos: Si True, carga spaCy en __init__. Word2Vec y mT5 se cargan
+                            bajo demanda para no penalizar el tiempo de arranque de Flask.
+        """
         self.modelo_spacy_nombre = modelo_spacy
         self.nlp = None
         self._wv = None               # KeyedVectors; carga bajo demanda
@@ -202,7 +221,22 @@ class PLN:
                           documentos_elastic: List[Dict],
                           campo_texto: str = 'contenido',
                           umbral_similitud: float = 0.0) -> List[Dict]:
-        """Re-rankea hits de Elasticsearch por similitud coseno (Word2Vec o GloVe spaCy como fallback)."""
+        """
+        Re-rankea hits de Elasticsearch por similitud coseno sobre un pool BM25.
+
+        Usa Word2Vec entrenado en el corpus normativo (self._wv) si está disponible,
+        o los vectores GloVe de es_core_news_lg como fallback automático (self.nlp).
+        Si ambos son None, retorna los hits en el orden BM25 original sin modificar.
+
+        Args:
+            query:              Texto de búsqueda del usuario.
+            documentos_elastic: Hits de Elasticsearch con _id, _score y _source.
+            campo_texto:        Campo de _source que contiene el texto del documento.
+            umbral_similitud:   Descarta documentos con similitud_coseno < umbral.
+
+        Returns:
+            Lista reordenada por similitud coseno descendente con campo 'similitud_coseno'.
+        """
         if self._wv is None and self.nlp is None:
             return documentos_elastic
         return buscar_documentos_conceptuales(

@@ -79,7 +79,11 @@ def preprocesar_para_transformer(texto: str) -> str:
     """
     if not texto:
         return ''
+    # NFC: unifica variantes Unicode a forma canónica compuesta (ej. 'é' como un
+    # solo codepoint vs 'e' + combining accent). Necesario para SentencePiece.
     texto = unicodedata.normalize('NFC', texto)
+    # Elimina caracteres de control (U+0000–U+001F salvo \t, \n, \r) que pueden
+    # causar warnings o tokenización incorrecta en el tokenizador de HuggingFace.
     texto = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', texto)
     texto = re.sub(r'[ \t]+', ' ', texto)
     return texto.strip()
@@ -187,6 +191,9 @@ def dividir_en_chunks(texto: str, max_chars: int = 800_000) -> List[str]:
             chunks.append(texto[inicio:])
             break
 
+        # rfind('\n'): busca el último salto de línea antes del límite para no partir
+        # entidades multipalabra en mitad de una línea. Si no hay salto en el rango
+        # (ej. texto continuo sin saltos), se corta en fin forzado.
         corte = texto.rfind('\n', inicio, fin)
         if corte <= inicio:
             corte = fin

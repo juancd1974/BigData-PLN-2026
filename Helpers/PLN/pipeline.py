@@ -8,6 +8,18 @@ metrics. Expone dos flujos de procesamiento:
   procesar_fase1()  → pipeline completo con el modelo liviano (mT5-small)
   procesar_fase2()  → solo resumen con el modelo de mayor calidad (mT5-base)
 
+Diseño de dos fases:
+  La fase 1 usa mT5-small (rápido, ~30 s/doc en CPU) para generar un resumen
+  provisional. La fase 2, opcional, usa mT5-base (más lento, mejor calidad)
+  sobre el mismo texto ya extraído. El texto se persiste en static/temp/ entre
+  fases porque ambas ocurren en peticiones HTTP separadas (EventSource) y el
+  texto puede superar varios MB — demasiado grande para enviarlo al browser y
+  de vuelta.
+
+  Cada fase genera su propio archivo de métricas en static/metrics/:
+    {hash}_{modelo_fase1}.json  → extracción + NER + metadatos + resumen fase 1
+    {hash}_{modelo_fase2}.json  → solo resumen fase 2 (sin datos de extracción)
+
 Los errores por etapa se registran en consola sin interrumpir el pipeline:
 el documento se indexa con los campos que se pudieron extraer correctamente.
 
@@ -69,6 +81,12 @@ def guardar_texto_temporal(hash_archivo: str, nombre_archivo: str,
                             texto: str) -> Optional[str]:
     """
     Guarda el texto extraído de un PDF en un JSON temporal en static/temp/.
+
+    El texto se almacena en disco porque la fase 1 y la fase 2 ocurren en dos
+    peticiones HTTP separadas (EventSource en el browser). El texto puede tener
+    varios MB — demasiado grande para enviarlo en la respuesta SSE y de vuelta
+    en la petición de fase 2. Los archivos en static/temp/ sirven de canal de
+    comunicación entre fases sin pasar por el browser.
 
     Args:
         hash_archivo:   Hash SHA-256 con prefijo "sha256:".
@@ -330,6 +348,10 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
             liberar_modelo_resumen(pln)
             pln.cargar_resumen(modelo_resumen)
 
+        # generar_resumen_con_metricas() aplica preprocesar_para_transformer() internamente
+        # (no limpiar_texto()): el AutoTokenizer de mT5 usa SentencePiece y necesita el
+        # texto con puntuación, números y capitalización intactos para subword tokenization.
+        # Aplicar limpiar_texto() antes degradaría la calidad del resumen generado.
         resumen, metricas_resumen = summarizer.generar_resumen_con_metricas(
             pln._pipeline_resumen, texto
         )
@@ -455,6 +477,11 @@ def procesar_fase2(texto: str, nombre: str,
     """
     modelo_base = obtener_modelo_fase('fase2')
     try:
+        # Nuevo dict de métricas independiente del de fase 1: el archivo resultante
+        # ({hash}_{modelo_fase2}.json) coexiste con el de fase 1 en static/metrics/
+        # y permite comparar perplejidad y tiempo de ambos modelos en el panel.
+        # La sección extraccion_texto queda con calidad_ok=None (no hay extracción
+        # en fase 2); calcular_resumen_comparativo() lo detecta y lo omite.
         metricas = metrics.inicializar_metricas_documento(nombre, hash_archivo)
 
         modelo_actual = (
@@ -462,12 +489,12 @@ def procesar_fase2(texto: str, nombre: str,
             if pln._pipeline_resumen else None
         )
         if pln._pipeline_resumen is None or modelo_actual != modelo_base:
-            if callback: callback('info', 'Cargando mT5-base...')
+            if callback: callback('info', f'Cargando {modelo_base}...')
             liberar_modelo_resumen(pln)
             pln.cargar_resumen(modelo_base)
-            if callback: callback('ok', 'mT5-base listo')
+            if callback: callback('ok', f'{modelo_base} listo')
 
-        if callback: callback('info', 'Generando resumen con mT5-base...')
+        if callback: callback('info', f'Generando resumen con {modelo_base}...')
         resumen, metricas_resumen = summarizer.generar_resumen_con_metricas(
             pln._pipeline_resumen, texto
         )
@@ -499,6 +526,7 @@ def estimar_tiempo_fase2(num_documentos: int,
     Returns:
         Dict con segundos_estimados, minutos_estimados y mensaje legible.
     """
+    # Factor 2.5: empírico, mT5-base tarda ~2.5× más que mT5-small por documento en las mismas condiciones de hardware.
     segundos = num_documentos * tiempo_promedio_fase1 * 2.5
 
     if segundos < 60:
