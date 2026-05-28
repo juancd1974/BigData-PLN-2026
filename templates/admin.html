@@ -39,7 +39,11 @@
                 <a href="/metricas" class="btn btn-primary boton_buscar w-100 py-3">Panel de Métricas</a>
             </div>
             <div class="col-md-4">
-                <button class="btn btn-secondary w-100 py-3" disabled>Próximamente</button>
+            {% if permisos and permisos.get('admin_data_elastic') %}
+                <a href="/entrenar-word2vec" class="btn btn-primary boton_buscar w-100 py-3">Entrenar Modelo W2V</a>
+            {% else %}
+                <div class="alert alert-warning text-center mb-0">Sin permiso (admin_data_elastic)</div>
+            {% endif %}
             </div>
             <div class="col-md-4">
             {% if permisos and permisos.get('admin_elastic') %}
@@ -65,7 +69,7 @@
     <footer class="footer text-center">
         <p class="mb-0">NormaSearch © 2026 — Juan Carlos Díaz González</p>
         <p class="mb-0">Maestría en Analítica de Datos · Universidad Central</p>
-        <p class="mb-0">v3.0.0</p>
+        <p class="mb-0">v{{ version }}</p>
     </footer>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq4cvVmFh9vju3MXgpoK" crossorigin="anonymous"></script>
 

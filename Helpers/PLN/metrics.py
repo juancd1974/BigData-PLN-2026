@@ -211,7 +211,9 @@ def cargar_todas_las_metricas() -> List[Dict]:
         ruta = os.path.join(METRICAS_DIR, nombre)
         try:
             with open(ruta, 'r', encoding='utf-8') as f:
-                resultado.append(json.load(f))
+                data = json.load(f)
+            if isinstance(data, dict):
+                resultado.append(data)
         except (json.JSONDecodeError, OSError):
             pass
 
@@ -220,86 +222,127 @@ def cargar_todas_las_metricas() -> List[Dict]:
 
 def calcular_resumen_comparativo() -> Dict:
     """
-    Lee todas las métricas guardadas y calcula estadísticas comparativas
-    agrupadas por modelo de resumen y método de extracción de texto.
+    Lee todas las métricas guardadas y calcula estadísticas en tres secciones:
 
-    Los documentos con perplexidad == -1.0 se excluyen de los promedios
-    de perplejidad pero sí cuentan para total_documentos y tiempo_promedio.
+    extraccion → conteo de intentos exitosos (pymupdf/ocr), fallidos y tasa.
+    metadatos  → completitud por campo (tipo_norma, numero_norma, anio_norma,
+                 entidad_emisora, fecha_documento) sobre documentos con
+                 detalle_campos disponible.
+    resumen    → perplejidad y tiempo promedio agrupados por modelo. Los
+                 documentos con perplexidad == -1.0 se excluyen del promedio
+                 de perplejidad pero cuentan para total_documentos y tiempo.
 
     Returns:
-        Dict con dos secciones: 'por_modelo' y 'extraccion'.
+        Dict con tres secciones: 'extraccion', 'metadatos' y 'resumen'.
     """
     todas = cargar_todas_las_metricas()
 
+    # ── Acumuladores extracción ──────────────────────────────────────────────
+    exitosos_pymupdf = 0
+    exitosos_ocr = 0
+    fallidos = 0
+
+    # ── Acumuladores metadatos ───────────────────────────────────────────────
+    _campos_objetivo = [
+        'tipo_norma', 'numero_norma', 'anio_norma',
+        'entidad_emisora', 'fecha_documento',
+    ]
+    _campo_counts: Dict[str, Dict] = {c: {'total': 0, 'completos': 0} for c in _campos_objetivo}
+    total_docs_meta = 0
+    _completitudes: List[float] = []
+
+    # ── Acumuladores resumen por modelo ─────────────────────────────────────
+    # Las claves con prefijo '_' son acumuladores temporales; se reemplazan
+    # por valores calculados en resumen_por_modelo al finalizar.
     por_modelo: Dict[str, Dict] = {}
-    total_docs = 0
-    pymupdf_count = 0
-    ocr_count = 0
-    calidad_ok_count = 0
-    docs_con_extraccion = 0
 
-    # Las claves con prefijo '_' son acumuladores temporales dentro del dict de cada
-    # modelo; se reemplazan por valores calculados en resumen_por_modelo al finalizar.
     for m in todas:
-        total_docs += 1
-
+        # Extracción
         extraccion = m.get("extraccion_texto", {})
+        calidad_ok = extraccion.get("calidad_ok")
         metodo = extraccion.get("metodo")
-        if metodo == "pymupdf":
-            pymupdf_count += 1
-        elif metodo == "ocr":
-            ocr_count += 1
-        if metodo is not None:
-            docs_con_extraccion += 1
-            if extraccion.get("calidad_ok"):
-                calidad_ok_count += 1
+        if calidad_ok:
+            if metodo == "pymupdf":
+                exitosos_pymupdf += 1
+            elif metodo == "ocr":
+                exitosos_ocr += 1
+        else:
+            fallidos += 1
 
-        resumen = m.get("resumen", {})
-        modelo = resumen.get("modelo") or "sin_modelo"
+        # Metadatos
+        meta = m.get("metadatos", {})
+        detalle = meta.get("detalle_campos")
+        if detalle is not None:
+            total_docs_meta += 1
+            for campo in _campos_objetivo:
+                _campo_counts[campo]['total'] += 1
+                if detalle.get(campo):
+                    _campo_counts[campo]['completos'] += 1
+            completitud = meta.get("completitud_porcentaje")
+            if completitud is not None:
+                _completitudes.append(completitud)
+
+        # Resumen por modelo
+        res = m.get("resumen", {})
+        modelo = res.get("modelo") or "sin_modelo"
         if modelo not in por_modelo:
             por_modelo[modelo] = {
                 "_tiempos": [],
                 "_perplexidades": [],
-                "_completitudes": [],
                 "total_documentos": 0,
             }
-
         por_modelo[modelo]["total_documentos"] += 1
-
-        tiempo = resumen.get("tiempo_segundos")
+        tiempo = res.get("tiempo_segundos")
         if tiempo is not None:
             por_modelo[modelo]["_tiempos"].append(tiempo)
-
-        perp = resumen.get("perplexidad")
+        perp = res.get("perplexidad")
         if perp is not None and perp != -1.0:
             por_modelo[modelo]["_perplexidades"].append(perp)
 
-        completitud = m.get("metadatos", {}).get("completitud_porcentaje")
-        if completitud is not None:
-            por_modelo[modelo]["_completitudes"].append(completitud)
+    # ── Calcular resultados ──────────────────────────────────────────────────
+    total_intentos = exitosos_pymupdf + exitosos_ocr + fallidos
+    tasa_exito = round(
+        ((exitosos_pymupdf + exitosos_ocr) / total_intentos) * 100, 1
+    ) if total_intentos else 0.0
+
+    por_campo: Dict[str, Dict] = {}
+    for campo, counts in _campo_counts.items():
+        total = counts['total']
+        completos = counts['completos']
+        por_campo[campo] = {
+            "total": total,
+            "completos": completos,
+            "porcentaje": round((completos / total) * 100, 1) if total else 0.0,
+        }
 
     resumen_por_modelo: Dict[str, Dict] = {}
     for modelo, datos in por_modelo.items():
         perps = datos["_perplexidades"]
         tiempos = datos["_tiempos"]
-        completitudes = datos["_completitudes"]
         resumen_por_modelo[modelo] = {
             "total_documentos": datos["total_documentos"],
             "perplexidad_promedio": round(sum(perps) / len(perps), 4) if perps else None,
             "perplexidad_min": round(min(perps), 4) if perps else None,
             "perplexidad_max": round(max(perps), 4) if perps else None,
             "tiempo_promedio_segundos": round(sum(tiempos) / len(tiempos), 3) if tiempos else None,
-            "completitud_metadatos_promedio": round(sum(completitudes) / len(completitudes), 1) if completitudes else None,
         }
 
-    tasa_exitosa = round((calidad_ok_count / docs_con_extraccion) * 100, 1) if docs_con_extraccion else 0.0
-
     return {
-        "por_modelo": resumen_por_modelo,
         "extraccion": {
-            "total_documentos": total_docs,
-            "pymupdf_count": pymupdf_count,
-            "ocr_count": ocr_count,
-            "tasa_extraccion_exitosa": tasa_exitosa,
+            "total_intentos": total_intentos,
+            "exitosos_pymupdf": exitosos_pymupdf,
+            "exitosos_ocr": exitosos_ocr,
+            "fallidos": fallidos,
+            "tasa_exito": tasa_exito,
+        },
+        "metadatos": {
+            "total_documentos": total_docs_meta,
+            "completitud_promedio": round(
+                sum(_completitudes) / len(_completitudes), 1
+            ) if _completitudes else 0.0,
+            "por_campo": por_campo,
+        },
+        "resumen": {
+            "por_modelo": resumen_por_modelo,
         },
     }

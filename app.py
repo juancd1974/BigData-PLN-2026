@@ -3,8 +3,9 @@ from dotenv import load_dotenv
 import os
 from werkzeug.utils import secure_filename
 from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN
-from Helpers.PLN import pipeline, metrics
+from Helpers.PLN import pipeline, metrics, vector_search
 import json
+from datetime import datetime
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -29,7 +30,7 @@ ELASTIC_INDEX_DEFAULT   = os.getenv('ELASTIC_INDEX_DEFAULT', 'index_minagricultu
 UPLOAD_DIR = os.getenv('UPLOAD_DIR', 'static/uploads')
 
 # Versión de la aplicación
-VERSION_APP = "2.0.0"
+VERSION_APP = "3.0.0"
 CREATOR_APP = "JuanCDG"
 
 
@@ -39,6 +40,9 @@ mongo = MongoDB(MONGO_URI, MONGO_DB)
 mongo.verificar_colecciones(MONGO_COLECCION)
 elastic      = ElasticSearch(ELASTIC_URL, ELASTIC_USER, ELASTIC_PASSWORD)
 pln_busqueda = PLN(cargar_modelos=True)
+_W2V_PATH = 'models/normasearch_w2v_sg_v100_w5.model'
+if os.path.exists(_W2V_PATH):
+    pln_busqueda.cargar_word2vec(_W2V_PATH)
 
 # ==================== RUTAS ====================
 @app.route('/')
@@ -211,6 +215,102 @@ def buscar_elastic():
         }), 500
 #--------------rutas del buscador en elastic-fin-------------
 
+#--------------entrenar word2vec-inicio-------------
+@app.route('/entrenar-word2vec')
+def entrenar_word2vec_page():
+    """Página de entrenamiento Word2Vec (requiere permiso admin_data_elastic)."""
+    if not session.get('logged_in'):
+        flash('Inicia sesión para acceder', 'warning')
+        return redirect(url_for('login'))
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        flash('Sin permiso para esta acción', 'danger')
+        return redirect(url_for('admin'))
+    return render_template('entrenar_w2v.html', version=VERSION_APP,
+                           modelo_existe=os.path.exists(_W2V_PATH))
+
+
+@app.route('/entrenar-word2vec/stream')
+def entrenar_word2vec_stream():
+    """SSE: tokeniza corpus desde ES, entrena Word2Vec y recarga en pln_busqueda."""
+    if not session.get('logged_in'):
+        return jsonify({'success': False, 'error': 'No autorizado'}), 401
+    if not session.get('permisos', {}).get('admin_data_elastic'):
+        return jsonify({'success': False, 'error': 'Sin permiso'}), 403
+
+    modo = request.args.get('modo', 'incremental')
+
+    def generate():
+        def evento(tipo, mensaje):
+            return f"data: {json.dumps({'tipo': tipo, 'mensaje': mensaje})}\n\n"
+
+        yield evento('info', 'Consultando Elasticsearch...')
+        resultado = elastic.buscar(
+            index=ELASTIC_INDEX_DEFAULT,
+            query={"query": {"match_all": {}}, "_source": ["texto"]},
+            size=500,
+        )
+        if not resultado.get('success'):
+            yield evento('error', f"Error al consultar ES: {resultado.get('error', '')}")
+            yield f"data: {json.dumps({'tipo': 'fin', 'success': False})}\n\n"
+            return
+
+        hits   = resultado.get('resultados', [])
+        n_docs = len(hits)
+        if not hits:
+            yield evento('error', 'No hay documentos en el índice.')
+            yield f"data: {json.dumps({'tipo': 'fin', 'success': False})}\n\n"
+            return
+
+        yield evento('info', f'{n_docs} documentos encontrados. Tokenizando con spaCy (puede tardar)...')
+
+        corpus = []
+        for i, hit in enumerate(hits, 1):
+            texto  = (hit.get('_source') or {}).get('texto', '')
+            if not texto:
+                continue
+            procesado = pln_busqueda.preprocesar_texto(texto)
+            tokens    = procesado.split() if procesado else []
+            if tokens:
+                corpus.append(tokens)
+            if i % 50 == 0:
+                yield evento('info', f'  Tokenizados {i}/{n_docs} ({len(corpus)} con tokens)...')
+
+        if not corpus:
+            yield evento('error', 'Sin tokens válidos tras preprocesar. Abortando.')
+            yield f"data: {json.dumps({'tipo': 'fin', 'success': False})}\n\n"
+            return
+
+        yield evento('info', f'Corpus listo: {len(corpus)} documentos. Iniciando entrenamiento...')
+
+        modelo_existente = None
+        if modo == 'incremental' and os.path.exists(_W2V_PATH):
+            yield evento('info', 'Modo incremental → cargando modelo existente...')
+            modelo_existente = vector_search.cargar_modelo_completo(_W2V_PATH)
+        else:
+            if modo == 'desde_cero':
+                yield evento('info', 'Modo desde cero → el modelo existente será reemplazado.')
+            else:
+                yield evento('info', 'Sin modelo previo → entrenando desde cero.')
+            os.makedirs('models', exist_ok=True)
+
+        modelo = vector_search.entrenar_word2vec(corpus, modelo_existente=modelo_existente)
+        if modelo is None:
+            yield evento('error', 'Entrenamiento fallido (gensim no disponible).')
+            yield f"data: {json.dumps({'tipo': 'fin', 'success': False})}\n\n"
+            return
+
+        ruta_guardado = vector_search.guardar_modelo(modelo, _W2V_PATH)
+        yield evento('ok', f'Modelo guardado en: {ruta_guardado}')
+
+        pln_busqueda.cargar_word2vec(_W2V_PATH)
+        yield evento('ok', 'Modelo recargado en memoria.')
+
+        yield f"data: {json.dumps({'tipo': 'fin', 'success': True, 'documentos_usados': len(corpus), 'mensaje': f'Completado con {len(corpus)} documentos.'})}\n\n"
+
+    return Response(generate(), mimetype='text/event-stream',
+                    headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+#--------------entrenar word2vec-fin-------------
+
 #--------------rutas de mongodb (usuarios)-inicio-------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -233,7 +333,7 @@ def login():
         else:
             flash('Usuario o contraseña incorrectos', 'danger')
     
-    return render_template('login.html')
+    return render_template('login.html', version=VERSION_APP, creador=CREATOR_APP)
 
 @app.route('/listar-usuarios')
 def listar_usuarios():
@@ -836,12 +936,34 @@ def guardar_configuracion():
     return jsonify({'success': True, 'modelo_activo': modelo_hf})
 
 
+_EVALUACIONES_PATH = 'static/metrics/evaluaciones_precision.json'
+
+
 @app.route('/metricas')
 def metricas_vista():
     """Panel de métricas operacionales del pipeline PLN"""
     resumen = metrics.calcular_resumen_comparativo()
-    todas = metrics.cargar_todas_las_metricas()
+    todas   = metrics.cargar_todas_las_metricas()
+
+    evaluaciones_precision = []
+    if os.path.exists(_EVALUACIONES_PATH):
+        try:
+            with open(_EVALUACIONES_PATH, 'r', encoding='utf-8') as f:
+                evaluaciones_precision = json.load(f)
+        except Exception:
+            evaluaciones_precision = []
+
+    ev_bm25_avg = ev_sem_avg = ev_diff_avg = 0.0
+    if evaluaciones_precision:
+        n_ev        = len(evaluaciones_precision)
+        ev_bm25_avg = round(sum(e.get('bm25_p5', 0) for e in evaluaciones_precision) / n_ev, 2)
+        ev_sem_avg  = round(sum(e.get('semantico_p5', 0) for e in evaluaciones_precision) / n_ev, 2)
+        ev_diff_avg = round(ev_sem_avg - ev_bm25_avg, 2)
+
     return render_template('metricas.html', resumen=resumen, metricas=todas,
+                           evaluaciones_precision=evaluaciones_precision,
+                           ev_bm25_avg=ev_bm25_avg, ev_sem_avg=ev_sem_avg,
+                           ev_diff_avg=ev_diff_avg,
                            version=VERSION_APP, creador=CREATOR_APP)
 
 
@@ -849,6 +971,116 @@ def metricas_vista():
 def metricas_datos():
     """API JSON con el resumen comparativo de métricas para consumo desde JavaScript"""
     return jsonify(metrics.calcular_resumen_comparativo())
+
+
+@app.route('/metricas/precision-datos')
+def metricas_precision_datos():
+    """API JSON con historial de evaluaciones Precisión@5"""
+    evaluaciones = []
+    if os.path.exists(_EVALUACIONES_PATH):
+        try:
+            with open(_EVALUACIONES_PATH, 'r', encoding='utf-8') as f:
+                evaluaciones = json.load(f)
+        except Exception:
+            evaluaciones = []
+    return jsonify(evaluaciones)
+
+
+@app.route('/evaluar-precision', methods=['POST'])
+def evaluar_precision():
+    """Retorna top-5 BM25 puro y top-5 BM25+Semántico para una consulta."""
+    try:
+        data  = request.get_json()
+        texto = (data.get('texto') or '').strip()
+        n     = int(data.get('n', 5))
+        if not texto:
+            return jsonify({'success': False, 'error': 'Consulta vacía'}), 400
+
+        query_base = {
+            "query": {
+                "bool": {
+                    "must": [{
+                        "multi_match": {
+                            "query": texto,
+                            "type": "best_fields",
+                            "minimum_should_match": "60%",
+                            "fields": [
+                                "titulo_norma^5", "resumen^4", "texto^3",
+                                "entidades.personas^2", "entidades.lugares^2",
+                                "entidades.organizaciones^2", "entidades.leyes^2",
+                                "entidades.otros", "tipo_norma^3", "entidad_emisora^3",
+                                "temas.palabra^4"
+                            ]
+                        }
+                    }]
+                }
+            }
+        }
+
+        resultado = elastic.buscar(
+            index=ELASTIC_INDEX_DEFAULT,
+            query=query_base,
+            size=max(n * 4, 20)
+        )
+        if not resultado.get('success'):
+            return jsonify({'success': False, 'error': resultado.get('error', 'Error ES')}), 500
+
+        hits_raw = resultado.get('resultados', [])
+
+        def extraer_campos(hits):
+            return [h.get('_source') or {} for h in hits]
+
+        bm25_hits      = extraer_campos(hits_raw[:n])
+        sem_list       = pln_busqueda.buscar_conceptual(texto, list(hits_raw), campo_texto='texto')
+        semantico_hits = extraer_campos(sem_list[:n])
+
+        return jsonify({'success': True, 'bm25': bm25_hits, 'semantico': semantico_hits})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/guardar-evaluacion', methods=['POST'])
+def guardar_evaluacion():
+    """Calcula P@5 y persiste la evaluación en evaluaciones_precision.json."""
+    try:
+        data     = request.get_json()
+        consulta = (data.get('consulta') or '').strip()
+        bm25_rel = data.get('bm25_relevantes', [])
+        sem_rel  = data.get('semantico_relevantes', [])
+
+        if not consulta:
+            return jsonify({'success': False, 'error': 'Consulta vacía'}), 400
+
+        bm25_p5 = round(sum(1 for r in bm25_rel if r) / 5, 2)
+        sem_p5  = round(sum(1 for r in sem_rel  if r) / 5, 2)
+
+        evaluacion = {
+            'consulta':             consulta,
+            'timestamp':            datetime.now().isoformat(),
+            'bm25_p5':              bm25_p5,
+            'semantico_p5':         sem_p5,
+            'bm25_relevantes':      bm25_rel,
+            'semantico_relevantes': sem_rel,
+        }
+
+        evaluaciones = []
+        if os.path.exists(_EVALUACIONES_PATH):
+            try:
+                with open(_EVALUACIONES_PATH, 'r', encoding='utf-8') as f:
+                    evaluaciones = json.load(f)
+            except Exception:
+                evaluaciones = []
+
+        evaluaciones.append(evaluacion)
+        os.makedirs('static/metrics', exist_ok=True)
+        with open(_EVALUACIONES_PATH, 'w', encoding='utf-8') as f:
+            json.dump(evaluaciones, f, ensure_ascii=False, indent=2)
+
+        return jsonify({'success': True, 'bm25_p5': bm25_p5, 'semantico_p5': sem_p5})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/procesar-fase1')

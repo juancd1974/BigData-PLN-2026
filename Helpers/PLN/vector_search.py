@@ -60,20 +60,26 @@ def entrenar_word2vec(corpus_tokenizado: List[List[str]],
                       vector_size: int = 100,
                       window: int = 5,
                       min_count: int = 2,
-                      epochs: int = 50):
+                      epochs: int = 50,
+                      modelo_existente=None):
     """
     Entrena Word2Vec sobre el corpus normativo. Requiere gensim>=4.
+
+    Si modelo_existente es un objeto Word2Vec cargado con cargar_modelo_completo(),
+    realiza entrenamiento incremental (build_vocab update + train). Si es None,
+    entrena desde cero con los hiperparámetros dados.
 
     Skip-gram (sg=1) es preferido para términos legales de baja frecuencia.
     Retorna None si GENSIM_DISPONIBLE es False.
 
     Args:
         corpus_tokenizado: Lista de documentos tokenizados.
-        sg:          0 = CBOW, 1 = Skip-gram.
-        vector_size: Dimensión de los embeddings.
-        window:      Tamaño de la ventana de contexto.
-        min_count:   Frecuencia mínima para incluir un token.
-        epochs:      Iteraciones de entrenamiento.
+        sg:               0 = CBOW, 1 = Skip-gram (solo aplica a entrenamiento desde cero).
+        vector_size:      Dimensión de los embeddings (solo desde cero).
+        window:           Tamaño de la ventana de contexto (solo desde cero).
+        min_count:        Frecuencia mínima para incluir un token (solo desde cero).
+        epochs:           Iteraciones de entrenamiento.
+        modelo_existente: Objeto Word2Vec completo para entrenamiento incremental, o None.
 
     Returns:
         Modelo Word2Vec entrenado, o None si gensim no está disponible.
@@ -84,15 +90,26 @@ def entrenar_word2vec(corpus_tokenizado: List[List[str]],
 
     trabajadores = max(1, multiprocessing.cpu_count() - 1)
     arq = 'Skip-gram' if sg == 1 else 'CBOW'
+
+    if modelo_existente is not None:
+        print(f"  Entrenamiento incremental ({arq}): actualizando vocabulario con {len(corpus_tokenizado)} docs...")
+        modelo_existente.build_vocab(corpus_tokenizado, update=True)
+        modelo_existente.train(
+            corpus_tokenizado,
+            total_examples=len(corpus_tokenizado),
+            epochs=epochs,
+        )
+        n = len(modelo_existente.wv)
+        print(f"  ✓ Vocabulario actualizado: {n} palabras")
+        return modelo_existente
+
     print(f"  Entrenando Word2Vec ({arq}): vector_size={vector_size}, "
           f"window={window}, min_count={min_count}, epochs={epochs}")
-
     modelo = Word2Vec(
         sentences=corpus_tokenizado,
         sg=sg, vector_size=vector_size, window=window,
         min_count=min_count, epochs=epochs, workers=trabajadores, seed=42,
     )
-
     n = len(modelo.wv)
     print(f"  ✓ Vocabulario: {n} palabras ({n * vector_size:,} parámetros)")
     return modelo
@@ -159,6 +176,35 @@ def cargar_modelo_word2vec(ruta: Optional[str] = None):
 
     except Exception as exc:
         print(f"  ✗ Error cargando '{archivo.name}': {exc}")
+        return None
+
+
+def cargar_modelo_completo(ruta: Optional[str] = None):
+    """
+    Carga el objeto Word2Vec completo (no solo KeyedVectors) para entrenamiento incremental.
+
+    Retorna None si gensim no está disponible, el archivo no existe o no es .model.
+
+    Args:
+        ruta: Ruta al archivo .model. Si None usa _RUTA_MODELO_DEFAULT.
+
+    Returns:
+        Objeto Word2Vec completo, o None.
+    """
+    if not GENSIM_DISPONIBLE:
+        return None
+    archivo = Path(ruta) if ruta else _RUTA_MODELO_DEFAULT
+    if not archivo.exists():
+        return None
+    if archivo.suffix.lower() != '.model':
+        print(f"  [!] Entrenamiento incremental solo soportado para .model. Recibido: {archivo.suffix}")
+        return None
+    try:
+        modelo = Word2Vec.load(str(archivo))
+        print(f"  ✓ Modelo completo cargado para reentrenamiento: {archivo.name}")
+        return modelo
+    except Exception as exc:
+        print(f"  ✗ Error cargando modelo completo '{archivo.name}': {exc}")
         return None
 
 

@@ -281,6 +281,7 @@ def procesar_documento(ruta: str, nombre: str, hash_archivo: str,
     if not texto or len(texto.strip()) < 50:
         print(f"  ✗ Texto insuficiente en '{nombre}'. Se omite el documento.")
         if callback: callback('error', 'Texto insuficiente, documento omitido')
+        metrics.guardar_metricas(metricas)
         return None, metricas
 
     # ── b. NER ────────────────────────────────────────────────────────────

@@ -12,6 +12,27 @@
         .filtro-grupo      { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid #dee2e6; }
         .filtro-grupo:last-child { border-bottom: none; }
         .tema-badge        { font-size: 0.72rem; }
+
+        /* ── Nav-tabs visibles sobre fondo #dce3ed ── */
+        #tabsBuscador { border-bottom: 2px solid #8aa8c8; }
+        #tabsBuscador .nav-link {
+            background-color: var(--azul-suave, #d6e0f0);
+            color: #1a2a4a;
+            border: 1px solid #8aa8c8;
+            border-radius: 0.375rem 0.375rem 0 0;
+            font-weight: 500;
+        }
+        #tabsBuscador .nav-link:hover {
+            background-color: #bfcfe8;
+            color: #1a2a4a;
+            border-color: #6a88a8;
+        }
+        #tabsBuscador .nav-link.active {
+            background-color: #ffffff;
+            color: #1a3a5c;
+            border-color: #8aa8c8 #8aa8c8 #dce3ed;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
@@ -39,6 +60,25 @@
     <main class="main">
         <div class="container-fluid mt-4 px-4">
             <h2 class="mb-3">Buscador de Normatividad</h2>
+
+            <!-- Pestañas -->
+            <ul class="nav nav-tabs mb-3" id="tabsBuscador" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="tab-buscador" data-bs-toggle="tab"
+                            data-bs-target="#pane-buscador" type="button" role="tab"
+                            aria-controls="pane-buscador" aria-selected="true">Buscador</button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="tab-eval" data-bs-toggle="tab"
+                            data-bs-target="#pane-eval" type="button" role="tab"
+                            aria-controls="pane-eval" aria-selected="false">Evaluación P@5</button>
+                </li>
+            </ul>
+
+            <div class="tab-content" id="tabsContent">
+            <!-- Pestaña Buscador -->
+            <div class="tab-pane fade show active" id="pane-buscador" role="tabpanel"
+                 aria-labelledby="tab-buscador">
 
             <!-- Formulario de búsqueda -->
             <div class="card mb-3 buscador_1">
@@ -90,13 +130,93 @@
                     </div>
                 </div>
             </div>
+            </div><!-- /pane-buscador -->
+
+            <!-- Pestaña Evaluación P@5 -->
+            <div class="tab-pane fade" id="pane-eval" role="tabpanel"
+                 aria-labelledby="tab-eval">
+
+                <!-- Consulta -->
+                <div class="card mb-3 buscador_1">
+                    <div class="card-body">
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="textoEvaluar"
+                                   placeholder="Ingresa una consulta para evaluar...">
+                            <button class="btn btn-primary" type="button"
+                                    onclick="ejecutarEvaluacion()">Evaluar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Spinner -->
+                <div id="divCargandoEval" class="text-center my-4" style="display:none">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2 text-muted">Evaluando...</p>
+                </div>
+
+                <!-- Error -->
+                <div id="divErrorEval" class="alert alert-danger" style="display:none"></div>
+
+                <!-- Resultados lado a lado -->
+                <div id="divResultadosEval" style="display:none">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <div class="card buscador_1 h-100">
+                                <div class="card-header">
+                                    <strong>BM25 puro</strong>
+                                </div>
+                                <div class="card-body" id="lista-bm25"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card buscador_1 h-100">
+                                <div class="card-header">
+                                    <strong>BM25 + Semántico (W2V/GloVe)</strong>
+                                </div>
+                                <div class="card-body" id="lista-semantico"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="text-center mb-3">
+                        <button class="btn btn-success px-4" onclick="guardarEvaluacion()">
+                            Guardar evaluación
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Resultado P@5 (visible tras guardar) -->
+                <div id="divResultadoGuardado" style="display:none">
+                    <div class="card buscador_1">
+                        <div class="card-body text-center py-3">
+                            <h6 class="mb-3">Precisión@5 — Resultados</h6>
+                            <div class="row g-3">
+                                <div class="col-4">
+                                    <p class="text-muted mb-1 small">P@5 BM25</p>
+                                    <p class="display-6 fw-bold mb-0" id="res-bm25-p5">—</p>
+                                </div>
+                                <div class="col-4">
+                                    <p class="text-muted mb-1 small">P@5 Semántico</p>
+                                    <p class="display-6 fw-bold mb-0" id="res-sem-p5">—</p>
+                                </div>
+                                <div class="col-4">
+                                    <p class="text-muted mb-1 small">Diferencia (Sem − BM25)</p>
+                                    <p class="display-6 fw-bold mb-1" id="res-diff">—</p>
+                                    <small class="text-muted" id="res-ganador"></small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div><!-- /pane-eval -->
+            </div><!-- /tab-content -->
         </div>
     </main>
 
     <footer class="footer text-center mt-5">
         <p class="mb-0">NormaSearch © 2026 — Juan Carlos Díaz González</p>
         <p class="mb-0">Maestría en Analítica de Datos · Universidad Central</p>
-        <p class="mb-0">v3.0.0</p>
+        <p class="mb-0">v{{ version }}</p>
     </footer>
 
     <!-- Modal detalle documento -->
@@ -122,6 +242,7 @@
         let ultimaBusqueda  = [];
         let paginaActual    = 1;
         const TAMANO_PAGINA = 10;
+        let evalHits        = { bm25: [], sem: [] };
 
         // ── Búsqueda Elasticsearch ───────────────────────────────────────────────────
         function buscar(event) {
@@ -269,8 +390,7 @@
         }
 
         // ── Modal detalle ────────────────────────────────────────────────────────────
-        function verDetalle(index) {
-            const s = ultimaBusqueda[index]?._source || {};
+        function verDetalleEval(s) {
             document.getElementById('modalTitulo').textContent = s.titulo_norma || 'Detalle del documento';
 
             const entidades = s.entidades || {};
@@ -300,6 +420,10 @@
             `;
         }
 
+        function verDetalle(index) {
+            verDetalleEval(ultimaBusqueda[index]?._source || {});
+        }
+
         // ── Helpers UI ───────────────────────────────────────────────────────────────
         function mostrarCargando(msg) {
             document.getElementById('mensajeCargando').textContent = msg || 'Cargando...';
@@ -312,6 +436,99 @@
         function mostrarError(msg) {
             document.getElementById('mensajeError').textContent = msg;
             document.getElementById('divError').style.display   = 'block';
+        }
+
+        // ── Evaluación P@5 ───────────────────────────────────────────────────────────
+        function ejecutarEvaluacion() {
+            const texto = document.getElementById('textoEvaluar').value.trim();
+            if (!texto) return;
+
+            document.getElementById('divCargandoEval').style.display     = 'block';
+            document.getElementById('divErrorEval').style.display        = 'none';
+            document.getElementById('divResultadosEval').style.display   = 'none';
+            document.getElementById('divResultadoGuardado').style.display = 'none';
+
+            fetch('/evaluar-precision', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ texto, n: 5 })
+            })
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('divCargandoEval').style.display = 'none';
+                if (!data.success) {
+                    const elErr = document.getElementById('divErrorEval');
+                    elErr.textContent = data.error || 'Error desconocido';
+                    elErr.style.display = 'block';
+                    return;
+                }
+                renderizarResultadosEval(data.bm25,      'lista-bm25',      'bm25');
+                renderizarResultadosEval(data.semantico, 'lista-semantico', 'sem');
+                document.getElementById('divResultadosEval').style.display = 'block';
+            })
+            .catch(() => {
+                document.getElementById('divCargandoEval').style.display = 'none';
+                const elErr = document.getElementById('divErrorEval');
+                elErr.textContent = 'Error de conexión';
+                elErr.style.display = 'block';
+            });
+        }
+
+        function renderizarResultadosEval(hits, containerId, prefix) {
+            const container = document.getElementById(containerId);
+            if (!hits || !hits.length) {
+                container.innerHTML = '<p class="text-muted small">Sin resultados.</p>';
+                return;
+            }
+            evalHits[prefix] = hits;
+            container.innerHTML = hits.map((h, i) => `
+                <div class="d-flex align-items-start gap-2 mb-2">
+                    <span class="badge bg-secondary mt-1">#${i + 1}</span>
+                    <div class="flex-grow-1">
+                        <div class="fw-semibold small">${h.titulo_norma || '(sin título)'}</div>
+                        <small class="text-muted">${h.tipo_norma || ''}${h.numero_norma ? ' N° ' + h.numero_norma : ''}${h.anio_norma ? ' · ' + h.anio_norma : ''}</small>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                        <button class="btn btn-sm btn-outline-primary"
+                                onclick="verDetalleEval(evalHits['${prefix}'][${i}])"
+                                data-bs-toggle="modal" data-bs-target="#modalDetalle">
+                            Ver →
+                        </button>
+                        <div class="form-check mb-0">
+                            <input class="form-check-input" type="checkbox" id="${prefix}-rel-${i}">
+                            <label class="form-check-label small" for="${prefix}-rel-${i}">Relevante</label>
+                        </div>
+                    </div>
+                </div>`
+            ).join('');
+        }
+
+        function guardarEvaluacion() {
+            const consulta = document.getElementById('textoEvaluar').value.trim();
+            const bm25Rel  = [0,1,2,3,4].map(i => !!(document.getElementById(`bm25-rel-${i}`)?.checked));
+            const semRel   = [0,1,2,3,4].map(i => !!(document.getElementById(`sem-rel-${i}`)?.checked));
+
+            fetch('/guardar-evaluacion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ consulta, bm25_relevantes: bm25Rel, semantico_relevantes: semRel })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) { alert('Error al guardar: ' + (data.error || '')); return; }
+                const diff      = parseFloat((data.semantico_p5 - data.bm25_p5).toFixed(2));
+                const elBm25P5  = document.getElementById('res-bm25-p5');
+                const elSemP5   = document.getElementById('res-sem-p5');
+                const elDiff    = document.getElementById('res-diff');
+                const elGanador = document.getElementById('res-ganador');
+                elBm25P5.textContent  = data.bm25_p5.toFixed(2);
+                elSemP5.textContent   = data.semantico_p5.toFixed(2);
+                elDiff.textContent    = (diff >= 0 ? '+' : '') + diff.toFixed(2);
+                elDiff.className      = 'display-6 fw-bold mb-1 ' + (diff > 0 ? 'text-success' : diff < 0 ? 'text-danger' : 'text-muted');
+                elGanador.textContent = diff > 0 ? 'Semántico gana' : diff < 0 ? 'BM25 gana' : 'Empate';
+                document.getElementById('divResultadoGuardado').style.display = 'block';
+            })
+            .catch(() => alert('Error de conexión'));
         }
     </script>
 </body>
