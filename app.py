@@ -988,23 +988,12 @@ def evaluar_precision():
         if not texto:
             return jsonify({'success': False, 'error': 'Consulta vacía'}), 400
 
+        # match simple sobre texto: misma condición que el re-ranking semántico
+        # (campo_texto='texto'). Comparación justa — BM25 y semántico compiten sobre el mismo campo.
         query_base = {
             "query": {
-                "bool": {
-                    "must": [{
-                        "multi_match": {
-                            "query": texto,
-                            "type": "best_fields",
-                            "minimum_should_match": "60%",
-                            "fields": [
-                                "titulo_norma^5", "resumen^4", "texto^3",
-                                "entidades.personas^2", "entidades.lugares^2",
-                                "entidades.organizaciones^2", "entidades.leyes^2",
-                                "entidades.otros", "tipo_norma^3", "entidad_emisora^3",
-                                "temas.palabra^4"
-                            ]
-                        }
-                    }]
+                "match": {
+                    "texto": texto
                 }
             }
         }
