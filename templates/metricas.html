@@ -305,7 +305,7 @@
         <!-- ── Sección 4: Precisión@5 ── -->
         <h5 class="mb-3">4. Precisión@5</h5>
         <div class="row g-3 mb-4" id="cards-precision">
-            <div class="col-md-4">
+            <div class="col-sm-6 col-md-3">
                 <div class="card text-center buscador_1 h-100">
                     <div class="card-body d-flex flex-column align-items-center pb-3">
                         <div style="min-height:3em; display:flex; align-items:center; justify-content:center; width:100%;">
@@ -317,7 +317,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-sm-6 col-md-3">
                 <div class="card text-center buscador_1 h-100">
                     <div class="card-body d-flex flex-column align-items-center pb-3">
                         <div style="min-height:3em; display:flex; align-items:center; justify-content:center; width:100%;">
@@ -329,7 +329,7 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-4">
+            <div class="col-sm-6 col-md-3">
                 <div class="card text-center buscador_1 h-100">
                     <div class="card-body d-flex flex-column align-items-center pb-3">
                         <div style="min-height:3em; display:flex; align-items:center; justify-content:center; width:100%;">
@@ -351,6 +351,18 @@
                     </div>
                 </div>
             </div>
+            <div class="col-sm-6 col-md-3">
+                <div class="card text-center buscador_1 h-100">
+                    <div class="card-body d-flex flex-column align-items-center pb-3">
+                        <div style="min-height:3em; display:flex; align-items:center; justify-content:center; width:100%;">
+                            <h6 class="card-title text-muted mb-0">T. Re-ranking prom. (ms)</h6>
+                        </div>
+                        <p class="display-6 fw-bold mt-auto mb-0" id="val-rerank-avg">
+                            {% if ev_rerank_avg is not none %}{{ ev_rerank_avg }} ms{% else %}—{% endif %}
+                        </p>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <!-- Tabla historial P@5 -->
@@ -368,6 +380,8 @@
                                 <th>Consulta</th>
                                 <th class="text-center">P@5 BM25</th>
                                 <th class="text-center">P@5 Semántico</th>
+                                <th class="text-center">T. BM25 (ms)</th>
+                                <th class="text-center">T. Reranking (ms)</th>
                                 <th class="text-center">Fecha</th>
                             </tr>
                         </thead>
@@ -377,6 +391,8 @@
                                 <td>{{ ev.get('consulta', '—') }}</td>
                                 <td class="text-center">{{ ev.get('bm25_p5', '—') }}</td>
                                 <td class="text-center">{{ ev.get('semantico_p5', '—') }}</td>
+                                <td class="text-center">{{ ev.get('tiempo_bm25_ms', '—') }}</td>
+                                <td class="text-center">{{ ev.get('tiempo_reranking_ms', '—') }}</td>
                                 <td class="text-center">{{ ev.get('timestamp', '')[:10] or '—' }}</td>
                             </tr>
                             {% endfor %}
@@ -547,20 +563,26 @@
     }
 
     function actualizarSeccionPrecision(evs) {
-        const elBm25  = document.getElementById('val-bm25-p5');
-        const elSem   = document.getElementById('val-sem-p5');
-        const elDiff  = document.getElementById('val-diff-p5');
-        const elGan   = document.getElementById('val-diff-ganador');
-        const wrapper = document.getElementById('tabla-precision-wrapper');
+        const elBm25   = document.getElementById('val-bm25-p5');
+        const elSem    = document.getElementById('val-sem-p5');
+        const elDiff   = document.getElementById('val-diff-p5');
+        const elGan    = document.getElementById('val-diff-ganador');
+        const elRerank = document.getElementById('val-rerank-avg');
+        const wrapper  = document.getElementById('tabla-precision-wrapper');
 
         if (evs && evs.length) {
             const n       = evs.length;
             const bm25Avg = evs.reduce((s, e) => s + e.bm25_p5, 0) / n;
             const semAvg  = evs.reduce((s, e) => s + e.semantico_p5, 0) / n;
             const diff    = parseFloat((semAvg - bm25Avg).toFixed(2));
+            const rerankTimes = evs.map(e => e.tiempo_reranking_ms).filter(v => v != null);
+            const rerankAvg   = rerankTimes.length
+                ? Math.round(rerankTimes.reduce((s, v) => s + v, 0) / rerankTimes.length)
+                : null;
 
-            if (elBm25) elBm25.textContent = bm25Avg.toFixed(2);
-            if (elSem)  elSem.textContent  = semAvg.toFixed(2);
+            if (elBm25)   elBm25.textContent  = bm25Avg.toFixed(2);
+            if (elSem)    elSem.textContent    = semAvg.toFixed(2);
+            if (elRerank) elRerank.textContent = rerankAvg !== null ? rerankAvg + ' ms' : '—';
             if (elDiff) {
                 elDiff.textContent = (diff >= 0 ? '+' : '') + diff.toFixed(2);
                 elDiff.className   = 'display-6 fw-bold mt-auto mb-1 ' +
@@ -573,6 +595,8 @@
                     <td>${ev.consulta || '—'}</td>
                     <td class="text-center">${ev.bm25_p5 ?? '—'}</td>
                     <td class="text-center">${ev.semantico_p5 ?? '—'}</td>
+                    <td class="text-center">${ev.tiempo_bm25_ms ?? '—'}</td>
+                    <td class="text-center">${ev.tiempo_reranking_ms ?? '—'}</td>
                     <td class="text-center">${(ev.timestamp || '').substring(0, 10) || '—'}</td>
                 </tr>`).join('');
                 wrapper.innerHTML = `
@@ -583,6 +607,8 @@
                                 <th>Consulta</th>
                                 <th class="text-center">P@5 BM25</th>
                                 <th class="text-center">P@5 Semántico</th>
+                                <th class="text-center">T. BM25 (ms)</th>
+                                <th class="text-center">T. Reranking (ms)</th>
                                 <th class="text-center">Fecha</th>
                             </tr></thead>
                             <tbody>${filas}</tbody>
@@ -590,8 +616,9 @@
                     </div>`;
             }
         } else {
-            if (elBm25) elBm25.textContent = '—';
-            if (elSem)  elSem.textContent  = '—';
+            if (elBm25)   elBm25.textContent  = '—';
+            if (elSem)    elSem.textContent    = '—';
+            if (elRerank) elRerank.textContent = '—';
             if (elDiff) {
                 elDiff.textContent = '—';
                 elDiff.className   = 'display-6 fw-bold mt-auto mb-1 text-muted';

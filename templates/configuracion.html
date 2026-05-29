@@ -145,6 +145,28 @@
                 </div>
             </div>
 
+            <!-- SECCIÓN 4: Búsqueda semántica -->
+            <div class="card buscador_1 mb-4">
+                <div class="card-header">
+                    <h5 class="mb-0">4. Búsqueda semántica</h5>
+                </div>
+                <div class="card-body">
+                    <label class="form-label fw-bold" for="pool_reranking_input">
+                        Tamaño del pool de re-ranking (5–200)
+                    </label>
+                    <div class="input-group" style="max-width: 220px;">
+                        <input type="number" class="form-control" id="pool_reranking_input"
+                               min="5" max="200"
+                               value="{{ cfg.get('pool_reranking', 20) }}">
+                        <button class="btn btn-primary boton_buscar" onclick="guardarPool()">Guardar</button>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">
+                        Documentos que recupera Elasticsearch antes del re-ranking semántico.
+                        Valores bajos = más rápido, valores altos = mayor precisión.
+                    </p>
+                </div>
+            </div>
+
         </div>
     </main>
 
@@ -166,6 +188,15 @@
             alerta.className = `alert alert-${tipo} mb-4`;
             alerta.textContent = mensaje;
             alerta.classList.remove('d-none');
+        }
+
+        function guardarPool() {
+            const val = parseInt(document.getElementById('pool_reranking_input').value);
+            if (isNaN(val) || val < 5 || val > 200) {
+                mostrarAlerta('El pool debe ser un número entero entre 5 y 200.', 'danger');
+                return;
+            }
+            guardarCampo('pool_reranking', val);
         }
 
         function guardarCampo(campo, valor) {

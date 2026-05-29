@@ -177,6 +177,7 @@
                             </div>
                         </div>
                     </div>
+                    <div id="divTiempos" class="text-center text-muted small mb-2" style="display:none"></div>
                     <div class="text-center mb-3">
                         <button class="btn btn-success px-4" onclick="guardarEvaluacion()">
                             Guardar evaluación
@@ -243,6 +244,7 @@
         let paginaActual    = 1;
         const TAMANO_PAGINA = 10;
         let evalHits        = { bm25: [], sem: [] };
+        let evalTiempos     = { bm25_ms: null, reranking_ms: null, total_ms: null };
 
         // ── Búsqueda Elasticsearch ───────────────────────────────────────────────────
         function buscar(event) {
@@ -464,6 +466,14 @@
                 }
                 renderizarResultadosEval(data.bm25,      'lista-bm25',      'bm25');
                 renderizarResultadosEval(data.semantico, 'lista-semantico', 'sem');
+                evalTiempos = {
+                    bm25_ms:      data.tiempo_bm25_ms,
+                    reranking_ms: data.tiempo_reranking_ms,
+                    total_ms:     data.tiempo_total_ms,
+                };
+                const divT = document.getElementById('divTiempos');
+                divT.textContent = `BM25: ${data.tiempo_bm25_ms} ms  |  Re-ranking: ${data.tiempo_reranking_ms} ms  |  Total: ${data.tiempo_total_ms} ms`;
+                divT.style.display = 'block';
                 document.getElementById('divResultadosEval').style.display = 'block';
             })
             .catch(() => {
@@ -511,7 +521,14 @@
             fetch('/guardar-evaluacion', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ consulta, bm25_relevantes: bm25Rel, semantico_relevantes: semRel })
+                body: JSON.stringify({
+                    consulta,
+                    bm25_relevantes:      bm25Rel,
+                    semantico_relevantes: semRel,
+                    tiempo_bm25_ms:       evalTiempos.bm25_ms,
+                    tiempo_reranking_ms:  evalTiempos.reranking_ms,
+                    tiempo_total_ms:      evalTiempos.total_ms,
+                })
             })
             .then(r => r.json())
             .then(data => {

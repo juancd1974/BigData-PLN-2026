@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, jsonify, session, flash, Response
 from dotenv import load_dotenv
 import os
+import time
 from werkzeug.utils import secure_filename
 from Helpers import MongoDB, ElasticSearch, Funciones, WebScrapingMinAgricultura, PLN
 from Helpers.PLN import pipeline, metrics, vector_search
@@ -43,6 +44,9 @@ pln_busqueda = PLN(cargar_modelos=True)
 _W2V_PATH = 'models/normasearch_w2v_sg_v100_w5.model'
 if os.path.exists(_W2V_PATH):
     pln_busqueda.cargar_word2vec(_W2V_PATH)
+
+# Tamaño del pool de re-ranking: documentos que recupera ES antes del re-ranking semántico.
+RERANK_POOL_SIZE = pipeline.cargar_config_modelos().get('configuracion_activa', {}).get('pool_reranking', 20)
 
 # ==================== RUTAS ====================
 @app.route('/')
@@ -169,7 +173,7 @@ def buscar_elastic():
             index=ELASTIC_INDEX_DEFAULT,
             query=query_base,
             aggs=aggs,
-            size=100
+            size=RERANK_POOL_SIZE
         )
 
         if resultado.get('success') and resultado.get('resultados'):
@@ -911,6 +915,16 @@ def guardar_configuracion():
         if campo in data:
             config_activa[campo] = data[campo]
 
+    # pool_reranking con validación de rango — fuera del loop genérico porque requiere coerción y límites.
+    if 'pool_reranking' in data:
+        try:
+            pool = int(data['pool_reranking'])
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'pool_reranking debe ser un entero'}), 400
+        if not (5 <= pool <= 200):
+            return jsonify({'success': False, 'error': 'pool_reranking debe estar entre 5 y 200'}), 400
+        config_activa['pool_reranking'] = pool
+
     summarizer_activo = config_activa.get('summarizer_activo')
     # Resuelve el modelo_hf del summarizer activo para devolverlo al frontend; el panel muestra el nombre real del modelo, no solo su ID interno.
     modelo_hf = next(
@@ -920,6 +934,9 @@ def guardar_configuracion():
     )
 
     pipeline.guardar_config_modelos(config)
+
+    global RERANK_POOL_SIZE
+    RERANK_POOL_SIZE = config_activa.get('pool_reranking', RERANK_POOL_SIZE)
 
     if modelo_anterior != summarizer_activo:
         pipeline.liberar_modelo_resumen(pln_busqueda)
@@ -946,16 +963,20 @@ def metricas_vista():
 
     # Promedios globales de P@5 para el panel; diferencia positiva indica cuánto mejora la búsqueda semántica sobre BM25 puro.
     ev_bm25_avg = ev_sem_avg = ev_diff_avg = 0.0
+    ev_rerank_avg = None
     if evaluaciones_precision:
         n_ev        = len(evaluaciones_precision)
         ev_bm25_avg = round(sum(e.get('bm25_p5', 0) for e in evaluaciones_precision) / n_ev, 2)
         ev_sem_avg  = round(sum(e.get('semantico_p5', 0) for e in evaluaciones_precision) / n_ev, 2)
         ev_diff_avg = round(ev_sem_avg - ev_bm25_avg, 2)
+        rerank_times = [e['tiempo_reranking_ms'] for e in evaluaciones_precision if e.get('tiempo_reranking_ms') is not None]
+        if rerank_times:
+            ev_rerank_avg = round(sum(rerank_times) / len(rerank_times))
 
     return render_template('metricas.html', resumen=resumen, metricas=todas,
                            evaluaciones_precision=evaluaciones_precision,
                            ev_bm25_avg=ev_bm25_avg, ev_sem_avg=ev_sem_avg,
-                           ev_diff_avg=ev_diff_avg,
+                           ev_diff_avg=ev_diff_avg, ev_rerank_avg=ev_rerank_avg,
                            version=VERSION_APP, creador=CREATOR_APP)
 
 
@@ -998,11 +1019,16 @@ def evaluar_precision():
             }
         }
 
+        t0_total = time.time()
+
+        t0_bm25 = time.time()
         resultado = elastic.buscar(
             index=ELASTIC_INDEX_DEFAULT,
             query=query_base,
-            size=100
+            size=RERANK_POOL_SIZE
         )
+        tiempo_bm25_ms = round((time.time() - t0_bm25) * 1000)
+
         if not resultado.get('success'):
             return jsonify({'success': False, 'error': resultado.get('error', 'Error ES')}), 500
 
@@ -1011,11 +1037,23 @@ def evaluar_precision():
         def extraer_campos(hits):
             return [h.get('_source') or {} for h in hits]
 
-        bm25_hits      = extraer_campos(hits_raw[:n])
-        sem_list       = pln_busqueda.buscar_conceptual(texto, list(hits_raw), campo_texto='texto')
-        semantico_hits = extraer_campos(sem_list[:n])
+        bm25_hits = extraer_campos(hits_raw[:n])
 
-        return jsonify({'success': True, 'bm25': bm25_hits, 'semantico': semantico_hits})
+        t0_rerank = time.time()
+        sem_list  = pln_busqueda.buscar_conceptual(texto, list(hits_raw), campo_texto='texto')
+        tiempo_reranking_ms = round((time.time() - t0_rerank) * 1000)
+
+        semantico_hits  = extraer_campos(sem_list[:n])
+        tiempo_total_ms = round((time.time() - t0_total) * 1000)
+
+        return jsonify({
+            'success':             True,
+            'bm25':                bm25_hits,
+            'semantico':           semantico_hits,
+            'tiempo_bm25_ms':      tiempo_bm25_ms,
+            'tiempo_reranking_ms': tiempo_reranking_ms,
+            'tiempo_total_ms':     tiempo_total_ms,
+        })
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1037,6 +1075,10 @@ def guardar_evaluacion():
         bm25_p5 = round(sum(1 for r in bm25_rel if r) / 5, 2)
         sem_p5  = round(sum(1 for r in sem_rel  if r) / 5, 2)
 
+        tiempo_bm25_ms      = data.get('tiempo_bm25_ms')
+        tiempo_reranking_ms = data.get('tiempo_reranking_ms')
+        tiempo_total_ms     = data.get('tiempo_total_ms')
+
         evaluacion = {
             'consulta':             consulta,
             'timestamp':            datetime.now().isoformat(),
@@ -1044,6 +1086,9 @@ def guardar_evaluacion():
             'semantico_p5':         sem_p5,
             'bm25_relevantes':      bm25_rel,
             'semantico_relevantes': sem_rel,
+            'tiempo_bm25_ms':       tiempo_bm25_ms,
+            'tiempo_reranking_ms':  tiempo_reranking_ms,
+            'tiempo_total_ms':      tiempo_total_ms,
         }
 
         evaluaciones = []
